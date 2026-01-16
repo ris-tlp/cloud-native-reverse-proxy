@@ -3,6 +3,7 @@ package router
 import (
 	"net/http"
 	"net/http/httputil"
+	"strings"
 )
 
 type Route struct {
@@ -28,8 +29,7 @@ func NewRouter(routes []Route) *Router {
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, route := range rt.routes {
 		if r.Host == route.Host &&
-			len(r.URL.Path) >= len(route.PathPrefix) &&
-			r.URL.Path[:len(route.PathPrefix)] == route.PathPrefix {
+			strings.HasPrefix(r.URL.Path, route.PathPrefix) {
 
 			route.Proxy.ServeHTTP(w, r)
 			return
