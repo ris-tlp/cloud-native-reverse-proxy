@@ -22,6 +22,6 @@ func New() *Router {
 	return router
 }
 
-func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.mux.ServeHTTP(w, req)
+func (router *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	router.mux.ServeHTTP(w, req)
 }
