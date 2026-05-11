@@ -3,12 +3,14 @@ package main
 import (
 	"log"
 
+	"cloud-native-reverse-proxy/pkg/registry"
 	"cloud-native-reverse-proxy/pkg/router"
 	"cloud-native-reverse-proxy/pkg/server"
 )
 
 func main() {
-	router := router.New()
+	registry := registry.New()
+	router := router.New(registry)
 	server := server.New(":8080", router)
 
 	if err := server.Start(); err != nil {

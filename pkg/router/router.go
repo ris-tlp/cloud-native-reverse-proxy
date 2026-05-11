@@ -4,24 +4,36 @@ package router
 import (
 	"io"
 	"net/http"
+
+	"cloud-native-reverse-proxy/pkg/registry"
 )
 
 type Router struct {
 	mux *http.ServeMux
 }
 
-func New() *Router {
-	router := &Router{
-		mux: http.NewServeMux(),
-	}
-
-	router.mux.HandleFunc("/health", func(w http.ResponseWriter, req *http.Request) {
-		io.WriteString(w, "Health check")
-	})
-
-	return router
+func New(reg *registry.Registry) *Router {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", healthHandler)
+	mux.Handle("/", proxyHandler(reg))
+	return &Router{mux: mux}
 }
 
-func (router *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	router.mux.ServeHTTP(w, req)
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.mux.ServeHTTP(w, req) // no branches, mux dispatches
+}
+
+func proxyHandler(reg *registry.Registry) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		route := reg.Lookup(req.Host)
+		if route == nil {
+			http.NotFound(w, req)
+			return
+		}
+		route.Proxy.ServeHTTP(w, req)
+	})
+}
+
+func healthHandler(w http.ResponseWriter, req *http.Request) {
+	_, _ = io.WriteString(w, "Healthy")
 }
