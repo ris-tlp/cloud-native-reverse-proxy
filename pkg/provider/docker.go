@@ -7,6 +7,7 @@ import (
 
 	"cloud-native-reverse-proxy/pkg/registry"
 
+	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
 )
 
@@ -16,7 +17,7 @@ type DockerProvider struct {
 	providerName string
 }
 
-func (dp *DockerProvider) NewDockerProvider() *DockerProvider {
+func NewDockerProvider() *DockerProvider {
 	return &DockerProvider{
 		providerName: DockerName,
 	}
@@ -30,15 +31,32 @@ func (dp *DockerProvider) Watch(reg *registry.Registry) error {
 		return err
 	}
 
-	events := dockerClient.Events(ctx, client.EventsListOptions{})
+	dockerEvents := dockerClient.Events(ctx, client.EventsListOptions{})
 
 	for {
 		select {
-		case err := <-events.Err:
+		case err := <-dockerEvents.Err:
 			fmt.Println(err)
 			return err
-		case eventMessage := <-events.Messages:
-			fmt.Println(eventMessage)
+		case eventMessage := <-dockerEvents.Messages:
+
+			if eventMessage.Type == events.ContainerEventType {
+				switch eventMessage.Action {
+				case events.ActionStart:
+					dp.handleStart(eventMessage)
+
+				case events.ActionStop, events.ActionDie:
+					dp.handleStop(eventMessage)
+				}
+			}
 		}
 	}
+}
+
+func (dp *DockerProvider) handleStart(eventMessage events.Message) {
+	fmt.Println(eventMessage.Action, eventMessage.Actor.ID, eventMessage.Type)
+}
+
+func (dp *DockerProvider) handleStop(eventsMessage events.Message) {
+	fmt.Println(eventsMessage.Action, eventsMessage.Actor.ID, eventsMessage.Type)
 }
