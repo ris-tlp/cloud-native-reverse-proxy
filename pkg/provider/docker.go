@@ -52,7 +52,7 @@ func (dp *DockerProvider) Watch(reg *registry.Registry) error {
 					dp.handleStart(ctx, eventMessage, reg)
 
 				case events.ActionStop, events.ActionDie:
-					dp.handleStop(eventMessage)
+					dp.handleStop(ctx, eventMessage, reg)
 				}
 			}
 		}
@@ -100,6 +100,18 @@ func (dp *DockerProvider) handleStart(ctx context.Context, eventMessage events.M
 	fmt.Println("registered route:", host, "->", targetURL.String())
 }
 
-func (dp *DockerProvider) handleStop(eventsMessage events.Message) {
-	fmt.Println(eventsMessage.Action, eventsMessage.Actor.ID, eventsMessage.Type)
+func (dp *DockerProvider) handleStop(ctx context.Context, eventMessage events.Message, reg *registry.Registry) {
+	containerInfo, err := dp.client.ContainerInspect(ctx, eventMessage.Actor.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		fmt.Println("inspect error:", err)
+		return
+	}
+
+	host, ok := containerInfo.Container.Config.Labels[HostLabel]
+	if !ok {
+		return
+	}
+
+	reg.Deregister(host)
+	fmt.Println("deregistered route:", host)
 }
