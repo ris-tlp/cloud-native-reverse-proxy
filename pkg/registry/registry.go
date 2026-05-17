@@ -2,22 +2,15 @@
 package registry
 
 import (
-	"net/http/httputil"
 	"sync"
 )
-
-type Route struct {
-	Host  string
-	URL   string
-	Proxy *httputil.ReverseProxy
-}
 
 type Registry struct {
 	mu     sync.RWMutex
 	routes map[string]*Route
 }
 
-func New() *Registry {
+func NewRegistry() *Registry {
 	return &Registry{routes: map[string]*Route{}}
 }
 

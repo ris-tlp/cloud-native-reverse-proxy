@@ -10,11 +10,14 @@ import (
 )
 
 func main() {
-	reg := registry.New()
+	reg := registry.NewRegistry()
 	r := router.New(reg)
 	srv := server.New(":8080", r)
 
-	prov := provider.NewDockerProvider()
+	prov, err := provider.NewDockerProvider()
+	if err != nil {
+		log.Fatalf("failed to create provider: %v", err)
+	}
 
 	go func() {
 		if err := prov.Watch(reg); err != nil {

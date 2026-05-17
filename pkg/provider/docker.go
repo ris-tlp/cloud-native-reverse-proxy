@@ -3,7 +3,8 @@ package provider
 import (
 	"context"
 	"fmt"
-	"log"
+	"net/netip"
+	"net/url"
 
 	"cloud-native-reverse-proxy/pkg/registry"
 
@@ -13,25 +14,30 @@ import (
 
 const DockerName = "docker"
 
+const (
+	HostLabel = "proxy.host"
+	PortLabel = "proxy.port"
+)
+
 type DockerProvider struct {
 	providerName string
+	client       *client.Client
 }
 
-func NewDockerProvider() *DockerProvider {
+func NewDockerProvider() (*DockerProvider, error) {
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		return nil, err
+	}
 	return &DockerProvider{
 		providerName: DockerName,
-	}
+		client:       cli,
+	}, nil
 }
 
 func (dp *DockerProvider) Watch(reg *registry.Registry) error {
 	ctx := context.Background()
-	dockerClient, err := client.New(client.FromEnv)
-	if err != nil {
-		log.Fatal(err)
-		return err
-	}
-
-	dockerEvents := dockerClient.Events(ctx, client.EventsListOptions{})
+	dockerEvents := dp.client.Events(ctx, client.EventsListOptions{})
 
 	for {
 		select {
@@ -43,7 +49,7 @@ func (dp *DockerProvider) Watch(reg *registry.Registry) error {
 			if eventMessage.Type == events.ContainerEventType {
 				switch eventMessage.Action {
 				case events.ActionStart:
-					dp.handleStart(eventMessage)
+					dp.handleStart(ctx, eventMessage, reg)
 
 				case events.ActionStop, events.ActionDie:
 					dp.handleStop(eventMessage)
@@ -53,8 +59,45 @@ func (dp *DockerProvider) Watch(reg *registry.Registry) error {
 	}
 }
 
-func (dp *DockerProvider) handleStart(eventMessage events.Message) {
+func (dp *DockerProvider) handleStart(ctx context.Context, eventMessage events.Message, reg *registry.Registry) {
 	fmt.Println(eventMessage.Action, eventMessage.Actor.ID, eventMessage.Type)
+
+	containerInfo, err := dp.client.ContainerInspect(ctx, eventMessage.Actor.ID, client.ContainerInspectOptions{})
+	if err != nil {
+		fmt.Println("inspect error:", err)
+		return
+	}
+
+	host, ok := containerInfo.Container.Config.Labels[HostLabel]
+	if !ok {
+		return
+	}
+	port, ok := containerInfo.Container.Config.Labels[PortLabel]
+	if !ok {
+		return
+	}
+
+	var containerIP netip.Addr
+	for _, network := range containerInfo.Container.NetworkSettings.Networks {
+		if network != nil && network.IPAddress.IsValid() {
+			containerIP = network.IPAddress
+			break
+		}
+	}
+
+	if !containerIP.IsValid() {
+		fmt.Println("no IP found for container", eventMessage.Actor.ID)
+		return
+	}
+
+	targetURL, err := url.Parse(fmt.Sprintf("http://%s:%s", containerIP, port))
+	if err != nil {
+		fmt.Println("url parse error:", err)
+		return
+	}
+
+	reg.Register(registry.NewRoute(host, targetURL))
+	fmt.Println("registered route:", host, "->", targetURL.String())
 }
 
 func (dp *DockerProvider) handleStop(eventsMessage events.Message) {
