@@ -37,7 +37,19 @@ func NewDockerProvider() (*DockerProvider, error) {
 
 func (dp *DockerProvider) Watch(reg *registry.Registry) error {
 	ctx := context.Background()
+
 	dockerEvents := dp.client.Events(ctx, client.EventsListOptions{})
+
+	containers, err := dp.client.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return err
+	}
+
+	// Register existing containers
+	for _, c := range containers.Items {
+		// Add check to ensure container needs to be registered through config
+		dp.registerContainer(ctx, c.ID, reg)
+	}
 
 	for {
 		select {
@@ -49,20 +61,18 @@ func (dp *DockerProvider) Watch(reg *registry.Registry) error {
 			if eventMessage.Type == events.ContainerEventType {
 				switch eventMessage.Action {
 				case events.ActionStart:
-					dp.handleStart(ctx, eventMessage, reg)
+					dp.registerContainer(ctx, eventMessage.Actor.ID, reg)
 
 				case events.ActionStop, events.ActionDie:
-					dp.handleStop(ctx, eventMessage, reg)
+					dp.deregisterContainer(ctx, eventMessage.Actor.ID, reg)
 				}
 			}
 		}
 	}
 }
 
-func (dp *DockerProvider) handleStart(ctx context.Context, eventMessage events.Message, reg *registry.Registry) {
-	fmt.Println(eventMessage.Action, eventMessage.Actor.ID, eventMessage.Type)
-
-	containerInfo, err := dp.client.ContainerInspect(ctx, eventMessage.Actor.ID, client.ContainerInspectOptions{})
+func (dp *DockerProvider) registerContainer(ctx context.Context, containerID string, reg *registry.Registry) {
+	containerInfo, err := dp.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		fmt.Println("inspect error:", err)
 		return
@@ -86,7 +96,7 @@ func (dp *DockerProvider) handleStart(ctx context.Context, eventMessage events.M
 	}
 
 	if !containerIP.IsValid() {
-		fmt.Println("no IP found for container", eventMessage.Actor.ID)
+		fmt.Println("no IP found for container", containerID)
 		return
 	}
 
@@ -100,8 +110,8 @@ func (dp *DockerProvider) handleStart(ctx context.Context, eventMessage events.M
 	fmt.Println("registered route:", host, "->", targetURL.String())
 }
 
-func (dp *DockerProvider) handleStop(ctx context.Context, eventMessage events.Message, reg *registry.Registry) {
-	containerInfo, err := dp.client.ContainerInspect(ctx, eventMessage.Actor.ID, client.ContainerInspectOptions{})
+func (dp *DockerProvider) deregisterContainer(ctx context.Context, containerID string, reg *registry.Registry) {
+	containerInfo, err := dp.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		fmt.Println("inspect error:", err)
 		return
