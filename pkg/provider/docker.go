@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"net/netip"
 	"net/url"
+	"time"
 
 	"cloud-native-reverse-proxy/pkg/registry"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
 )
+
+const watchMaxElapsed = 10 * time.Minute
 
 const DockerName = "docker"
 
@@ -35,7 +39,7 @@ func NewDockerProvider() (*DockerProvider, error) {
 	}, nil
 }
 
-func (dp *DockerProvider) Watch(reg *registry.Registry) error {
+func (dp *DockerProvider) watchOnce(reg *registry.Registry) error {
 	ctx := context.Background()
 
 	dockerEvents := dp.client.Events(ctx, client.EventsListOptions{})
@@ -69,6 +73,13 @@ func (dp *DockerProvider) Watch(reg *registry.Registry) error {
 			}
 		}
 	}
+}
+
+func (dp *DockerProvider) Watch(reg *registry.Registry) error {
+	b := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(watchMaxElapsed))
+	return backoff.Retry(func() error {
+		return dp.watchOnce(reg)
+	}, b)
 }
 
 func (dp *DockerProvider) registerContainer(ctx context.Context, containerID string, reg *registry.Registry) {
