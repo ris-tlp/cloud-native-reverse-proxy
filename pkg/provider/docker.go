@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -10,13 +11,15 @@ import (
 	"cloud-native-reverse-proxy/pkg/registry"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 )
 
-const watchMaxElapsed = 10 * time.Minute
+var errSkipContainer = errors.New("container not configured for proxy")
 
-const DockerName = "docker"
+const watchMaxElapsed = 10 * time.Minute
 
 const (
 	HostLabel = "proxy.host"
@@ -24,8 +27,7 @@ const (
 )
 
 type DockerProvider struct {
-	providerName string
-	client       *client.Client
+	client *client.Client
 }
 
 func NewDockerProvider() (*DockerProvider, error) {
@@ -34,9 +36,15 @@ func NewDockerProvider() (*DockerProvider, error) {
 		return nil, err
 	}
 	return &DockerProvider{
-		providerName: DockerName,
-		client:       cli,
+		client: cli,
 	}, nil
+}
+
+func (dp *DockerProvider) Watch(reg *registry.Registry) error {
+	b := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(watchMaxElapsed))
+	return backoff.Retry(func() error {
+		return dp.watchOnce(reg)
+	}, b)
 }
 
 func (dp *DockerProvider) watchOnce(reg *registry.Registry) error {
@@ -75,13 +83,6 @@ func (dp *DockerProvider) watchOnce(reg *registry.Registry) error {
 	}
 }
 
-func (dp *DockerProvider) Watch(reg *registry.Registry) error {
-	b := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(watchMaxElapsed))
-	return backoff.Retry(func() error {
-		return dp.watchOnce(reg)
-	}, b)
-}
-
 func (dp *DockerProvider) registerContainer(ctx context.Context, containerID string, reg *registry.Registry) {
 	containerInfo, err := dp.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
@@ -89,36 +90,49 @@ func (dp *DockerProvider) registerContainer(ctx context.Context, containerID str
 		return
 	}
 
-	host, ok := containerInfo.Container.Config.Labels[HostLabel]
-	if !ok {
+	route, err := parseRoute(containerInfo.Container)
+	if errors.Is(err, errSkipContainer) {
 		return
 	}
-	port, ok := containerInfo.Container.Config.Labels[PortLabel]
-	if !ok {
+	if err != nil {
+		fmt.Println("parse error for", containerID, ":", err)
 		return
 	}
 
-	var containerIP netip.Addr
-	for _, network := range containerInfo.Container.NetworkSettings.Networks {
-		if network != nil && network.IPAddress.IsValid() {
-			containerIP = network.IPAddress
-			break
+	reg.Register(route)
+	fmt.Println("registered route:", route.Host, "->", route.URL)
+}
+
+func parseRoute(info container.InspectResponse) (*registry.Route, error) {
+	host, ok := info.Config.Labels[HostLabel]
+	if !ok {
+		return nil, errSkipContainer
+	}
+	port, ok := info.Config.Labels[PortLabel]
+	if !ok {
+		return nil, errSkipContainer
+	}
+
+	ip, ok := firstValidIP(info.NetworkSettings.Networks)
+	if !ok {
+		return nil, errors.New("no valid IP on any network")
+	}
+
+	targetURL, err := url.Parse(fmt.Sprintf("http://%s:%s", ip, port))
+	if err != nil {
+		return nil, fmt.Errorf("build target URL: %w", err)
+	}
+
+	return registry.NewRoute(host, targetURL), nil
+}
+
+func firstValidIP(networks map[string]*network.EndpointSettings) (netip.Addr, bool) {
+	for _, n := range networks {
+		if n != nil && n.IPAddress.IsValid() {
+			return n.IPAddress, true
 		}
 	}
-
-	if !containerIP.IsValid() {
-		fmt.Println("no IP found for container", containerID)
-		return
-	}
-
-	targetURL, err := url.Parse(fmt.Sprintf("http://%s:%s", containerIP, port))
-	if err != nil {
-		fmt.Println("url parse error:", err)
-		return
-	}
-
-	reg.Register(registry.NewRoute(host, targetURL))
-	fmt.Println("registered route:", host, "->", targetURL.String())
+	return netip.Addr{}, false
 }
 
 func (dp *DockerProvider) deregisterContainer(ctx context.Context, containerID string, reg *registry.Registry) {
