@@ -40,17 +40,21 @@ func NewDockerProvider() (*DockerProvider, error) {
 	}, nil
 }
 
-func (dp *DockerProvider) Watch(reg *registry.Registry) error {
-	b := backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(watchMaxElapsed))
+func (dp *DockerProvider) Watch(ctx context.Context, reg *registry.Registry) error {
+	b := backoff.WithContext(
+		backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(watchMaxElapsed)),
+		ctx,
+	)
 	return backoff.Retry(func() error {
-		return dp.watchOnce(reg)
+		return dp.watchOnce(ctx, reg)
 	}, b)
 }
 
-func (dp *DockerProvider) watchOnce(reg *registry.Registry) error {
-	ctx := context.Background()
+func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry) error {
+	eventCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	dockerEvents := dp.client.Events(ctx, client.EventsListOptions{})
+	dockerEvents := dp.client.Events(eventCtx, client.EventsListOptions{})
 
 	containers, err := dp.client.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
@@ -65,6 +69,8 @@ func (dp *DockerProvider) watchOnce(reg *registry.Registry) error {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case err := <-dockerEvents.Err:
 			fmt.Println(err)
 			return err
