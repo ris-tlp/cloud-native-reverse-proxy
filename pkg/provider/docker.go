@@ -20,7 +20,10 @@ import (
 
 var errSkipContainer = errors.New("container not configured for proxy")
 
-const watchMaxElapsed = 10 * time.Minute
+const (
+	watchMaxElapsed = 10 * time.Minute
+	inspectTimeout  = 5 * time.Second
+)
 
 const (
 	HostLabel = "proxy.host"
@@ -91,7 +94,9 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 }
 
 func (dp *DockerProvider) registerContainer(ctx context.Context, containerID string, reg *registry.Registry) {
-	containerInfo, err := dp.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	inspectCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
+	defer cancel()
+	containerInfo, err := dp.client.ContainerInspect(inspectCtx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		slog.Error("inspect failed", "id", containerID, "err", err)
 		return
@@ -143,7 +148,9 @@ func firstValidIP(networks map[string]*network.EndpointSettings) (netip.Addr, bo
 }
 
 func (dp *DockerProvider) deregisterContainer(ctx context.Context, containerID string, reg *registry.Registry) {
-	containerInfo, err := dp.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	inspectCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
+	defer cancel()
+	containerInfo, err := dp.client.ContainerInspect(inspectCtx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		slog.Error("inspect failed", "id", containerID, "err", err)
 		return
