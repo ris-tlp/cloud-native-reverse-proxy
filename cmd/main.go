@@ -3,8 +3,9 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -16,6 +17,10 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -25,12 +30,13 @@ func main() {
 
 	prov, err := provider.NewDockerProvider()
 	if err != nil {
-		log.Fatalf("failed to create provider: %v", err)
+		slog.Error("failed to create provider", "err", err)
+		os.Exit(1)
 	}
 
 	go func() {
 		if err := prov.Watch(ctx, reg); err != nil && !errors.Is(err, context.Canceled) {
-			log.Printf("provider error: %v", err)
+			slog.Error("provider error", "err", err)
 		}
 	}()
 
@@ -44,16 +50,16 @@ func main() {
 
 	select {
 	case <-ctx.Done():
-		log.Println("shutdown signal received")
+		slog.Info("shutdown signal received")
 	case err := <-serverErr:
 		if err != nil {
-			log.Printf("server error: %v", err)
+			slog.Error("server error", "err", err)
 		}
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("server shutdown error: %v", err)
+		slog.Error("server shutdown error", "err", err)
 	}
 }

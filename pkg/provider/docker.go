@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"net/url"
 	"time"
@@ -72,7 +73,7 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 		case <-ctx.Done():
 			return ctx.Err()
 		case err := <-dockerEvents.Err:
-			fmt.Println(err)
+			slog.Error("docker events stream error", "err", err)
 			return err
 		case eventMessage := <-dockerEvents.Messages:
 
@@ -92,7 +93,7 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 func (dp *DockerProvider) registerContainer(ctx context.Context, containerID string, reg *registry.Registry) {
 	containerInfo, err := dp.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
-		fmt.Println("inspect error:", err)
+		slog.Error("inspect failed", "id", containerID, "err", err)
 		return
 	}
 
@@ -101,12 +102,12 @@ func (dp *DockerProvider) registerContainer(ctx context.Context, containerID str
 		return
 	}
 	if err != nil {
-		fmt.Println("parse error for", containerID, ":", err)
+		slog.Error("parse route failed", "id", containerID, "err", err)
 		return
 	}
 
 	reg.Register(route)
-	fmt.Println("registered route:", route.Host, "->", route.URL)
+	slog.Info("registered route", "host", route.Host, "url", route.URL)
 }
 
 func parseRoute(info container.InspectResponse) (*registry.Route, error) {
@@ -144,7 +145,7 @@ func firstValidIP(networks map[string]*network.EndpointSettings) (netip.Addr, bo
 func (dp *DockerProvider) deregisterContainer(ctx context.Context, containerID string, reg *registry.Registry) {
 	containerInfo, err := dp.client.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
-		fmt.Println("inspect error:", err)
+		slog.Error("inspect failed", "id", containerID, "err", err)
 		return
 	}
 
@@ -154,5 +155,5 @@ func (dp *DockerProvider) deregisterContainer(ctx context.Context, containerID s
 	}
 
 	reg.Deregister(host)
-	fmt.Println("deregistered route:", host)
+	slog.Info("deregistered route", "host", host)
 }
