@@ -33,6 +33,8 @@ const (
 	PortLabel = "proxy.port"
 )
 
+var _ Provider = (*DockerProvider)(nil)
+
 type DockerProvider struct {
 	client       *client.Client
 	providerName string
@@ -49,7 +51,7 @@ func NewDockerProvider() (*DockerProvider, error) {
 	}, nil
 }
 
-func (dp *DockerProvider) ProviderName() string { return dp.providerName }
+func (dp *DockerProvider) Name() string { return dp.providerName }
 
 func (dp *DockerProvider) Watch(ctx context.Context, reg *registry.Registry) error {
 	b := backoff.WithContext(
@@ -67,7 +69,7 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 
 	dockerEvents := dp.client.Events(eventCtx, client.EventsListOptions{})
 
-	if err := dp.reconcile(ctx, reg); err != nil {
+	if err := dp.Reconcile(ctx, reg); err != nil {
 		return err
 	}
 
@@ -93,14 +95,14 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 				}
 			}
 		case <-ticker.C:
-			if err := dp.reconcile(ctx, reg); err != nil {
+			if err := dp.Reconcile(ctx, reg); err != nil {
 				slog.Error("reconcile failed", "err", err)
 			}
 		}
 	}
 }
 
-func (dp *DockerProvider) reconcile(ctx context.Context, reg *registry.Registry) error {
+func (dp *DockerProvider) Reconcile(ctx context.Context, reg *registry.Registry) error {
 	containers, err := dp.client.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		return err
