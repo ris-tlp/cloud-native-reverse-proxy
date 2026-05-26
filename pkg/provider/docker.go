@@ -34,7 +34,8 @@ const (
 )
 
 type DockerProvider struct {
-	client *client.Client
+	client       *client.Client
+	providerName string
 }
 
 func NewDockerProvider() (*DockerProvider, error) {
@@ -43,9 +44,12 @@ func NewDockerProvider() (*DockerProvider, error) {
 		return nil, err
 	}
 	return &DockerProvider{
-		client: cli,
+		client:       cli,
+		providerName: "docker",
 	}, nil
 }
+
+func (dp *DockerProvider) ProviderName() string { return dp.providerName }
 
 func (dp *DockerProvider) Watch(ctx context.Context, reg *registry.Registry) error {
 	b := backoff.WithContext(
@@ -109,10 +113,10 @@ func (dp *DockerProvider) reconcile(ctx context.Context, reg *registry.Registry)
 		}
 	}
 
-	for _, host := range reg.Hosts() {
+	for _, host := range reg.HostsBySource(dp.providerName) {
 		if !expected[host] {
 			reg.Deregister(host)
-			slog.Info("reconciled: removed orphan route", "host", host)
+			slog.Info("reconciled: removed orphan route", "host", host, "source", dp.providerName)
 		}
 	}
 	return nil
@@ -127,7 +131,7 @@ func (dp *DockerProvider) registerContainer(ctx context.Context, containerID str
 		return ""
 	}
 
-	route, err := parseRoute(containerInfo.Container)
+	route, err := parseRoute(containerInfo.Container, dp.providerName)
 	if errors.Is(err, errSkipContainer) {
 		return ""
 	}
@@ -137,11 +141,11 @@ func (dp *DockerProvider) registerContainer(ctx context.Context, containerID str
 	}
 
 	reg.Register(route)
-	slog.Info("registered route", "host", route.Host, "url", route.Target)
+	slog.Info("registered route", "host", route.Host, "url", route.Target, "source", route.Source)
 	return route.Host
 }
 
-func parseRoute(info container.InspectResponse) (*registry.Route, error) {
+func parseRoute(info container.InspectResponse, source string) (*registry.Route, error) {
 	host, ok := info.Config.Labels[HostLabel]
 	if !ok {
 		return nil, errSkipContainer
@@ -166,7 +170,7 @@ func parseRoute(info container.InspectResponse) (*registry.Route, error) {
 		Host:   net.JoinHostPort(ip.String(), strconv.FormatUint(port, 10)),
 	}
 
-	return registry.NewRoute(host, targetURL), nil
+	return registry.NewRoute(host, targetURL, source), nil
 }
 
 func firstValidIP(networks map[string]*network.EndpointSettings) (netip.Addr, bool) {

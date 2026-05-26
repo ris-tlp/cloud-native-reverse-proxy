@@ -43,3 +43,15 @@ func (r *Registry) Hosts() []string {
 	fmt.Println(hosts)
 	return hosts
 }
+
+func (r *Registry) HostsBySource(source string) []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	hosts := make([]string, 0)
+	for h, route := range r.routes {
+		if route.Source == source {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
