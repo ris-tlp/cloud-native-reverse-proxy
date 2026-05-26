@@ -142,6 +142,11 @@ func (dp *DockerProvider) registerContainer(ctx context.Context, containerID str
 		return ""
 	}
 
+	if err := route.Proxy.Check(ctx); err != nil {
+		slog.Warn("health check failed, skipping registration", "host", route.Host, "url", route.Target, "err", err)
+		return ""
+	}
+
 	reg.Register(route)
 	slog.Info("registered route", "host", route.Host, "url", route.Target, "source", route.Source)
 	return route.Host
