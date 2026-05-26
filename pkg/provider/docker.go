@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"time"
 
 	"cloud-native-reverse-proxy/pkg/registry"
@@ -21,8 +23,9 @@ import (
 var errSkipContainer = errors.New("container not configured for proxy")
 
 const (
-	watchMaxElapsed = 10 * time.Minute
-	inspectTimeout  = 5 * time.Second
+	watchMaxElapsed   = 10 * time.Minute
+	inspectTimeout    = 5 * time.Second
+	reconcileInterval = 3 * time.Second
 )
 
 const (
@@ -60,16 +63,12 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 
 	dockerEvents := dp.client.Events(eventCtx, client.EventsListOptions{})
 
-	containers, err := dp.client.ContainerList(ctx, client.ContainerListOptions{})
-	if err != nil {
+	if err := dp.reconcile(ctx, reg); err != nil {
 		return err
 	}
 
-	// Register existing containers
-	for _, c := range containers.Items {
-		// Add check to ensure container needs to be registered through config
-		dp.registerContainer(ctx, c.ID, reg)
-	}
+	ticker := time.NewTicker(reconcileInterval)
+	defer ticker.Stop()
 
 	for {
 		select {
@@ -89,30 +88,57 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 					dp.deregisterContainer(ctx, eventMessage.Actor.ID, reg)
 				}
 			}
+		case <-ticker.C:
+			if err := dp.reconcile(ctx, reg); err != nil {
+				slog.Error("reconcile failed", "err", err)
+			}
 		}
 	}
 }
 
-func (dp *DockerProvider) registerContainer(ctx context.Context, containerID string, reg *registry.Registry) {
+func (dp *DockerProvider) reconcile(ctx context.Context, reg *registry.Registry) error {
+	containers, err := dp.client.ContainerList(ctx, client.ContainerListOptions{})
+	if err != nil {
+		return err
+	}
+
+	expected := make(map[string]bool, len(containers.Items))
+	for _, c := range containers.Items {
+		if host := dp.registerContainer(ctx, c.ID, reg); host != "" {
+			expected[host] = true
+		}
+	}
+
+	for _, host := range reg.Hosts() {
+		if !expected[host] {
+			reg.Deregister(host)
+			slog.Info("reconciled: removed orphan route", "host", host)
+		}
+	}
+	return nil
+}
+
+func (dp *DockerProvider) registerContainer(ctx context.Context, containerID string, reg *registry.Registry) string {
 	inspectCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
 	defer cancel()
 	containerInfo, err := dp.client.ContainerInspect(inspectCtx, containerID, client.ContainerInspectOptions{})
 	if err != nil {
 		slog.Error("inspect failed", "id", containerID, "err", err)
-		return
+		return ""
 	}
 
 	route, err := parseRoute(containerInfo.Container)
 	if errors.Is(err, errSkipContainer) {
-		return
+		return ""
 	}
 	if err != nil {
 		slog.Error("parse route failed", "id", containerID, "err", err)
-		return
+		return ""
 	}
 
 	reg.Register(route)
-	slog.Info("registered route", "host", route.Host, "url", route.URL)
+	slog.Info("registered route", "host", route.Host, "url", route.Target)
+	return route.Host
 }
 
 func parseRoute(info container.InspectResponse) (*registry.Route, error) {
@@ -120,9 +146,14 @@ func parseRoute(info container.InspectResponse) (*registry.Route, error) {
 	if !ok {
 		return nil, errSkipContainer
 	}
-	port, ok := info.Config.Labels[PortLabel]
+	portStr, ok := info.Config.Labels[PortLabel]
 	if !ok {
 		return nil, errSkipContainer
+	}
+
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port %q: %w", portStr, err)
 	}
 
 	ip, ok := firstValidIP(info.NetworkSettings.Networks)
@@ -130,9 +161,9 @@ func parseRoute(info container.InspectResponse) (*registry.Route, error) {
 		return nil, errors.New("no valid IP on any network")
 	}
 
-	targetURL, err := url.Parse(fmt.Sprintf("http://%s:%s", ip, port))
-	if err != nil {
-		return nil, fmt.Errorf("build target URL: %w", err)
+	targetURL := &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(ip.String(), strconv.FormatUint(port, 10)),
 	}
 
 	return registry.NewRoute(host, targetURL), nil

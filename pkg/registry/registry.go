@@ -2,6 +2,7 @@
 package registry
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -30,4 +31,15 @@ func (r *Registry) Lookup(host string) *Route {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.routes[host]
+}
+
+func (r *Registry) Hosts() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	hosts := make([]string, 0, len(r.routes))
+	for h := range r.routes {
+		hosts = append(hosts, h)
+	}
+	fmt.Println(hosts)
+	return hosts
 }
