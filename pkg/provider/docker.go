@@ -26,6 +26,7 @@ const (
 	watchMaxElapsed   = 10 * time.Minute
 	inspectTimeout    = 5 * time.Second
 	reconcileInterval = 3 * time.Second
+	eventBufferSize   = 100
 )
 
 const (
@@ -73,8 +74,8 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 		return err
 	}
 
-	ticker := time.NewTicker(reconcileInterval)
-	defer ticker.Stop()
+	changes := make(chan events.Message, eventBufferSize)
+	go dp.processEvents(ctx, reg, changes)
 
 	for {
 		select {
@@ -83,16 +84,52 @@ func (dp *DockerProvider) watchOnce(ctx context.Context, reg *registry.Registry)
 		case err := <-dockerEvents.Err:
 			slog.Error("docker events stream error", "err", err)
 			return err
-		case eventMessage := <-dockerEvents.Messages:
+		case msg := <-dockerEvents.Messages:
+			if !isContainerAction(msg) {
+				continue
+			}
+			if !trySend(changes, msg) {
+				slog.Warn("change channel full, dropping event — reconcile will catch up",
+					"action", msg.Action, "id", msg.Actor.ID,
+					"depth", len(changes), "cap", cap(changes))
+			}
+		}
+	}
+}
 
-			if eventMessage.Type == events.ContainerEventType {
-				switch eventMessage.Action {
-				case events.ActionStart:
-					dp.registerContainer(ctx, eventMessage.Actor.ID, reg)
+func isContainerAction(msg events.Message) bool {
+	if msg.Type != events.ContainerEventType {
+		return false
+	}
+	switch msg.Action {
+	case events.ActionStart, events.ActionStop, events.ActionDie:
+		return true
+	}
+	return false
+}
 
-				case events.ActionStop, events.ActionDie:
-					dp.deregisterContainer(ctx, eventMessage.Actor.ID, reg)
-				}
+func trySend(ch chan<- events.Message, msg events.Message) bool {
+	select {
+	case ch <- msg:
+		return true
+	default:
+		return false
+	}
+}
+
+func (dp *DockerProvider) processEvents(ctx context.Context, reg *registry.Registry, changes <-chan events.Message) {
+	ticker := time.NewTicker(reconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-changes:
+			switch msg.Action {
+			case events.ActionStart:
+				dp.registerContainer(ctx, msg.Actor.ID, reg)
+			case events.ActionStop, events.ActionDie:
+				dp.deregisterContainer(ctx, msg.Actor.ID, reg)
 			}
 		case <-ticker.C:
 			if err := dp.Reconcile(ctx, reg); err != nil {
