@@ -3,20 +3,28 @@ package provider
 
 import (
 	"context"
+	"log/slog"
 
 	"cloud-native-reverse-proxy/pkg/registry"
 )
 
-// Provider sources routes and keeps the registry in sync with that source
+type ChangeOp string
+
+const (
+	OpRegister   ChangeOp = "register"
+	OpDeregister ChangeOp = "deregister"
+)
+
+// Change is a framework level event that the watcher will consume to update the registry
+type Change struct {
+	Op     ChangeOp
+	Source string          // name of the emitting provider
+	Host   string          // route key (matches Route.Host for OpRegister)
+	Route  *registry.Route // populated for OpRegister; nil for OpDeregister
+}
+
+// Provider is solely used to source routes and announce changes
 type Provider interface {
-	// Name returns a stable identifier for this provider instance,
-	// used by the registry to scope ownership of routes
 	Name() string
-
-	// Subscribes to source events and runs periodic reconciliation internally on a ticker
-	Watch(ctx context.Context, reg *registry.Registry) error
-
-	// Reconcile performs a one-shot sync of the registry against the source's
-	// current state for configuration drift
-	Reconcile(ctx context.Context, reg *registry.Registry) error
+	Watch(ctx context.Context, changes chan<- Change, logger *slog.Logger) error
 }

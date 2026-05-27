@@ -14,12 +14,14 @@ import (
 	"cloud-native-reverse-proxy/pkg/registry"
 	"cloud-native-reverse-proxy/pkg/router"
 	"cloud-native-reverse-proxy/pkg/server"
+	"cloud-native-reverse-proxy/pkg/watcher"
 )
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
+	logger := slog.Default()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -28,15 +30,16 @@ func main() {
 	r := router.New(reg)
 	srv := server.New(":8080", r)
 
-	prov, err := provider.NewDockerProvider()
+	dockerProvider, err := provider.NewDockerProvider("docker")
 	if err != nil {
-		slog.Error("failed to create provider", "err", err)
+		slog.Error("failed to create docker provider", "err", err)
 		os.Exit(1)
 	}
 
+	w := watcher.NewWatcher(reg, logger, dockerProvider)
 	go func() {
-		if err := prov.Watch(ctx, reg); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Error("provider error", "err", err)
+		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("watcher error", "err", err)
 		}
 	}()
 
