@@ -2,7 +2,6 @@
 package registry
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -40,7 +39,6 @@ func (r *Registry) Hosts() []string {
 	for h := range r.routes {
 		hosts = append(hosts, h)
 	}
-	fmt.Println(hosts)
 	return hosts
 }
 

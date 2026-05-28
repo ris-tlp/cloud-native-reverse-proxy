@@ -22,10 +22,11 @@ import (
 var errSkipContainer = errors.New("container not configured for proxy")
 
 const (
-	inspectTimeout  = 5 * time.Second
-	innerBufferSize = 100
-	HostLabel       = "proxy.host"
-	PortLabel       = "proxy.port"
+	inspectTimeout    = 5 * time.Second
+	reconcileInterval = 2 * time.Second
+	innerBufferSize   = 100
+	HostLabel         = "proxy.host"
+	PortLabel         = "proxy.port"
 )
 
 var _ Provider = (*DockerProvider)(nil)
@@ -45,14 +46,14 @@ func NewDockerProvider(name string) (*DockerProvider, error) {
 
 func (dp *DockerProvider) Name() string { return dp.name }
 
-func (dp *DockerProvider) Watch(ctx context.Context, changes chan<- Change, logger *slog.Logger) error {
+func (dp *DockerProvider) Watch(ctx context.Context, watcherBuffer chan<- Event, logger *slog.Logger) error {
 	watchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	dockerEvents := dp.client.Events(watchCtx, client.EventsListOptions{})
 
 	innerBuffer := make(chan events.Message, innerBufferSize)
-	go dp.processEvents(watchCtx, innerBuffer, changes, logger)
+	go dp.processEvents(watchCtx, innerBuffer, watcherBuffer, logger)
 
 	for {
 		select {
@@ -98,7 +99,12 @@ func trySend(innerBuffer chan<- events.Message, msg events.Message) bool {
 }
 
 // Reads filtered container events from internal buffer and sends out Change events to watcher channel
-func (dp *DockerProvider) processEvents(ctx context.Context, innerBuffer <-chan events.Message, watcherBuffer chan<- Change, logger *slog.Logger) {
+func (dp *DockerProvider) processEvents(ctx context.Context, innerBuffer <-chan events.Message, watcherBuffer chan<- Event, logger *slog.Logger) {
+	ticker := time.NewTicker(reconcileInterval)
+	defer ticker.Stop()
+
+	dp.reconcile(ctx, watcherBuffer, logger) // initial sync to seed the registry
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -110,32 +116,26 @@ func (dp *DockerProvider) processEvents(ctx context.Context, innerBuffer <-chan 
 			case events.ActionStop, events.ActionDie:
 				dp.emitDeregister(ctx, msg.Actor.ID, watcherBuffer, logger)
 			}
+		case <-ticker.C:
+			dp.reconcile(ctx, watcherBuffer, logger)
 		}
 	}
 }
 
-func (dp *DockerProvider) emitRegister(ctx context.Context, containerID string, watcherBuffer chan<- Change, logger *slog.Logger) {
-	inspectCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
-	defer cancel()
-	info, err := dp.client.ContainerInspect(inspectCtx, containerID, client.ContainerInspectOptions{})
-	if err != nil {
-		logger.Error("inspect failed", "id", containerID, "err", err)
-		return
-	}
-
-	route, err := parseRoute(info.Container, dp.name)
+func (dp *DockerProvider) emitRegister(ctx context.Context, containerID string, watcherBuffer chan<- Event, logger *slog.Logger) {
+	route, err := dp.inspectRoute(ctx, containerID)
 	if errors.Is(err, errSkipContainer) {
 		return
 	}
 	if err != nil {
-		logger.Error("parse route failed", "id", containerID, "err", err)
+		logger.Error("inspect route failed", "id", containerID, "err", err)
 		return
 	}
 
 	emit(ctx, watcherBuffer, Change{Op: OpRegister, Source: dp.name, Host: route.Host, Route: route})
 }
 
-func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string, watcherBuffer chan<- Change, logger *slog.Logger) {
+func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string, watcherBuffer chan<- Event, logger *slog.Logger) {
 	inspectCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
 	defer cancel()
 	info, err := dp.client.ContainerInspect(inspectCtx, containerID, client.ContainerInspectOptions{})
@@ -152,10 +152,47 @@ func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string
 	emit(ctx, watcherBuffer, Change{Op: OpDeregister, Source: dp.name, Host: host})
 }
 
+// reconcile emits the full route set for this source so the watcher can correct drift
+func (dp *DockerProvider) reconcile(ctx context.Context, watcherBuffer chan<- Event, logger *slog.Logger) {
+	listCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
+	defer cancel()
+	list, err := dp.client.ContainerList(listCtx, client.ContainerListOptions{})
+	if err != nil {
+		logger.Error("reconcile list failed", "err", err)
+		return
+	}
+
+	routes := make([]*registry.Route, 0, len(list.Items))
+	for _, c := range list.Items {
+		route, err := dp.inspectRoute(ctx, c.ID)
+		if errors.Is(err, errSkipContainer) {
+			continue
+		}
+		if err != nil {
+			logger.Error("inspect route failed", "id", c.ID, "err", err)
+			continue
+		}
+		routes = append(routes, route)
+	}
+
+	emit(ctx, watcherBuffer, BatchChange{Source: dp.name, Routes: routes})
+}
+
+// inspectRoute inspects a container and translates it into a route
+func (dp *DockerProvider) inspectRoute(ctx context.Context, containerID string) (*registry.Route, error) {
+	inspectCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
+	defer cancel()
+	info, err := dp.client.ContainerInspect(inspectCtx, containerID, client.ContainerInspectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return parseRoute(info.Container, dp.name)
+}
+
 // emit performs a cancellable blocking send to the framework channel.
-func emit(ctx context.Context, watcherBuffer chan<- Change, c Change) {
+func emit(ctx context.Context, watcherBuffer chan<- Event, e Event) {
 	select {
-	case watcherBuffer <- c:
+	case watcherBuffer <- e:
 	case <-ctx.Done():
 	}
 }

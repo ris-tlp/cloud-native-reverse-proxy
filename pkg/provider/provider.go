@@ -15,16 +15,31 @@ const (
 	OpDeregister ChangeOp = "deregister"
 )
 
-// Change is a framework level event that the watcher will consume to update the registry
+// Event wraps Change and BatchChange events
+type Event interface {
+	isEvent()
+}
+
+// Change is a single incremental update emitted per container event
 type Change struct {
 	Op     ChangeOp
-	Source string          // name of the emitting provider
-	Host   string          // route key (matches Route.Host for OpRegister)
-	Route  *registry.Route // populated for OpRegister; nil for OpDeregister
+	Source string // name of the emitting provider
+	Host   string
+	Route  *registry.Route
 }
+
+func (Change) isEvent() {}
+
+// BatchChange is the full route set for a source for reconciliation
+type BatchChange struct {
+	Source string
+	Routes []*registry.Route
+}
+
+func (BatchChange) isEvent() {}
 
 // Provider is solely used to source routes and announce changes
 type Provider interface {
 	Name() string
-	Watch(ctx context.Context, changes chan<- Change, logger *slog.Logger) error
+	Watch(ctx context.Context, events chan<- Event, logger *slog.Logger) error
 }

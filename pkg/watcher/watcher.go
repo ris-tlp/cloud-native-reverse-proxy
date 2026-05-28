@@ -31,7 +31,7 @@ func NewWatcher(reg *registry.Registry, logger *slog.Logger, providers ...provid
 
 // Run launches every provider and the consumer
 func (w *Watcher) Run(ctx context.Context) error {
-	watcherBuffer := make(chan provider.Change, watcherBufferSize)
+	watcherBuffer := make(chan provider.Event, watcherBufferSize)
 
 	var wg sync.WaitGroup
 	for _, p := range w.providers {
@@ -54,7 +54,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 }
 
 // runProvider wraps a provider's Watch in exponential backoff
-func (w *Watcher) runProvider(ctx context.Context, p provider.Provider, watcherBuffer chan<- provider.Change) {
+func (w *Watcher) runProvider(ctx context.Context, p provider.Provider, watcherBuffer chan<- provider.Event) {
 	logger := w.logger.With("source", p.Name())
 
 	b := backoff.WithContext(
@@ -70,13 +70,37 @@ func (w *Watcher) runProvider(ctx context.Context, p provider.Provider, watcherB
 }
 
 // updateRegistry is the single mutator of the registry
-func (w *Watcher) updateRegistry(ctx context.Context, watcherBuffer <-chan provider.Change) {
+func (w *Watcher) updateRegistry(ctx context.Context, watcherBuffer <-chan provider.Event) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case c := <-watcherBuffer:
-			w.updateRoute(ctx, c)
+		case ev := <-watcherBuffer:
+			switch e := ev.(type) {
+			case provider.Change:
+				w.updateRoute(ctx, e)
+			case provider.BatchChange:
+				w.reconcile(ctx, e)
+			}
+		}
+	}
+}
+
+// reconcile diffs a source's full route set against the registry to correct drift
+func (w *Watcher) reconcile(ctx context.Context, b provider.BatchChange) {
+	desired := make(map[string]*registry.Route, len(b.Routes))
+	for _, route := range b.Routes {
+		desired[route.Host] = route
+	}
+
+	for _, route := range desired {
+		w.updateRoute(ctx, provider.Change{Op: provider.OpRegister, Source: b.Source, Host: route.Host, Route: route})
+	}
+
+	// drop orphans: registered for this source but absent from the batch
+	for _, host := range w.reg.HostsBySource(b.Source) {
+		if _, ok := desired[host]; !ok {
+			w.updateRoute(ctx, provider.Change{Op: provider.OpDeregister, Source: b.Source, Host: host})
 		}
 	}
 }
@@ -94,7 +118,7 @@ func (w *Watcher) updateRoute(ctx context.Context, c provider.Change) {
 		logger.Info("registered route", "target", c.Route.Target)
 	case provider.OpDeregister:
 		w.reg.Deregister(c.Host)
-		logger.Info("deregistered route")
+		logger.Info("deregistered route", "host", c.Host)
 	default:
 		logger.Warn("unknown change op", "op", c.Op)
 	}
