@@ -27,6 +27,7 @@ const (
 	innerBufferSize   = 100
 	HostLabel         = "proxy.host"
 	PortLabel         = "proxy.port"
+	LoadBalancerLabel = "proxy.loadbalancer"
 )
 
 var _ Provider = (*DockerProvider)(nil)
@@ -222,7 +223,8 @@ func parseRoute(info container.InspectResponse, source string) (*registry.Route,
 		Host:   net.JoinHostPort(ip.String(), strconv.FormatUint(port, 10)),
 	}
 
-	return registry.NewRoute(host, targetURL, source), nil
+	lb := registry.NewLoadBalancer(info.Config.Labels[LoadBalancerLabel])
+	return registry.NewRoute(host, targetURL, source, lb), nil
 }
 
 func firstValidIP(networks map[string]*network.EndpointSettings) (netip.Addr, bool) {

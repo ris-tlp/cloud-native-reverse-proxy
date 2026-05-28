@@ -7,17 +7,29 @@ import (
 )
 
 type Route struct {
-	Host   string
+	Host         string
+	Source       string
+	Backends     []*Backend
+	LoadBalancer LoadBalancer
+}
+
+func NewRoute(host string, target *url.URL, source string, loadBalancer LoadBalancer) *Route {
+	return &Route{
+		Host:         host,
+		Source:       source,
+		Backends:     []*Backend{NewBackend(target)},
+		LoadBalancer: loadBalancer,
+	}
+}
+
+type Backend struct {
 	Target *url.URL
-	Source string
 	Proxy  proxy.Proxy
 }
 
-func NewRoute(host string, target *url.URL, source string) *Route {
-	return &Route{
-		Host:   host,
+func NewBackend(target *url.URL) *Backend {
+	return &Backend{
 		Target: target,
-		Source: source,
 		Proxy:  proxy.NewSimple(target),
 	}
 }
