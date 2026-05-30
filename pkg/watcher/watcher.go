@@ -95,13 +95,13 @@ func (w *Watcher) reconcile(ctx context.Context, b provider.BatchChange) {
 	}
 
 	for _, route := range desired {
-		w.updateRoute(ctx, provider.Change{Op: provider.OpRegister, Source: b.Source, Host: route.Host, Route: route})
+		w.updateRoute(ctx, provider.Change{Op: provider.OpRegister, Host: route.Host, Route: route})
 	}
 
 	// drop orphan hosts
 	for _, host := range w.reg.HostsBySource(b.Source) {
 		if _, ok := desired[host]; !ok {
-			w.updateRoute(ctx, provider.Change{Op: provider.OpDeregister, Source: b.Source, Host: host})
+			w.updateRoute(ctx, provider.Change{Op: provider.OpDeregister, Host: host})
 		}
 	}
 
@@ -130,7 +130,11 @@ func (w *Watcher) reconcile(ctx context.Context, b provider.BatchChange) {
 
 // updateRoute applies a single Change after a naive TCP healthcheck
 func (w *Watcher) updateRoute(ctx context.Context, c provider.Change) {
-	logger := w.logger.With("source", c.Source, "host", c.Host)
+	source := ""
+	if c.Route != nil {
+		source = c.Route.Source
+	}
+	logger := w.logger.With("source", source, "host", c.Host)
 	switch c.Op {
 	case provider.OpRegister:
 		for _, b := range c.Route.Backends {

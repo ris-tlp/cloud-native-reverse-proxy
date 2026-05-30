@@ -22,10 +22,9 @@ type Event interface {
 
 // Change is a single incremental update emitted per container event
 type Change struct {
-	Op     ChangeOp
-	Source string
-	Host   string
-	Route  *registry.Route
+	Op    ChangeOp
+	Host  string
+	Route *registry.Route
 }
 
 func (Change) isEvent() {}

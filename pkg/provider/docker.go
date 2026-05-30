@@ -136,7 +136,7 @@ func (dp *DockerProvider) emitRegister(ctx context.Context, containerID string, 
 		return
 	}
 
-	emit(ctx, watcherBuffer, Change{Op: OpRegister, Source: dp.name, Host: route.Host, Route: route})
+	emit(ctx, watcherBuffer, Change{Op: OpRegister, Host: route.Host, Route: route})
 }
 
 func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string, watcherBuffer chan<- Event, logger *slog.Logger) {
@@ -149,7 +149,7 @@ func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string
 		return
 	}
 
-	emit(ctx, watcherBuffer, Change{Op: OpDeregister, Source: dp.name, Host: route.Host, Route: route})
+	emit(ctx, watcherBuffer, Change{Op: OpDeregister, Host: route.Host, Route: route})
 }
 
 // reconcile emits the full route set for this source so the watcher can correct drift
