@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"slices"
 	"sync"
+
+	"github.com/samber/lo"
 )
 
 type Registry struct {
@@ -57,21 +59,13 @@ func (r *Registry) Lookup(host string) *Route {
 func (r *Registry) Hosts() []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	hosts := make([]string, 0, len(r.routes))
-	for h := range r.routes {
-		hosts = append(hosts, h)
-	}
-	return hosts
+	return lo.Keys(r.routes)
 }
 
 func (r *Registry) HostsBySource(source string) []string {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	hosts := make([]string, 0)
-	for h, route := range r.routes {
-		if route.Source == source {
-			hosts = append(hosts, h)
-		}
-	}
-	return hosts
+	return lo.Keys(lo.PickBy(r.routes, func(_ string, route *Route) bool {
+		return route.Source == source
+	}))
 }

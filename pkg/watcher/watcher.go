@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/samber/lo"
 
 	"cloud-native-reverse-proxy/pkg/provider"
 	"cloud-native-reverse-proxy/pkg/registry"
@@ -89,10 +90,7 @@ func (w *Watcher) updateRegistry(ctx context.Context, watcherBuffer <-chan provi
 
 // reconcile diffs a source's full route set against the registry to correct drift
 func (w *Watcher) reconcile(ctx context.Context, b provider.BatchChange) {
-	desired := make(map[string]*registry.Route, len(b.Routes))
-	for _, route := range b.Routes {
-		desired[route.Host] = route
-	}
+	desired := lo.KeyBy(b.Routes, func(r *registry.Route) string { return r.Host })
 
 	for _, route := range desired {
 		w.updateRoute(ctx, provider.Change{Op: provider.OpRegister, Host: route.Host, Route: route})
@@ -111,19 +109,16 @@ func (w *Watcher) reconcile(ctx context.Context, b provider.BatchChange) {
 		if existing == nil {
 			continue
 		}
-		desiredTargets := make(map[string]struct{}, len(desiredRoute.Backends))
-		for _, b := range desiredRoute.Backends {
-			desiredTargets[b.Target.String()] = struct{}{}
-		}
-		var stale []*registry.Backend
-		for _, b := range existing.Backends {
-			if _, ok := desiredTargets[b.Target.String()]; !ok {
-				stale = append(stale, b)
-			}
-		}
-		for _, b := range stale {
-			w.reg.Deregister(host, b.Target)
-			w.logger.Info("deregistered stale backend", "host", host, "target", b.Target.Host)
+		desiredTargets := lo.SliceToMap(desiredRoute.Backends, func(be *registry.Backend) (string, struct{}) {
+			return be.Target.String(), struct{}{}
+		})
+		stale := lo.Filter(existing.Backends, func(be *registry.Backend, _ int) bool {
+			_, ok := desiredTargets[be.Target.String()]
+			return !ok
+		})
+		for _, be := range stale {
+			w.reg.Deregister(host, be.Target)
+			w.logger.Info("deregistered stale backend", "host", host, "target", be.Target.Host)
 		}
 	}
 }
