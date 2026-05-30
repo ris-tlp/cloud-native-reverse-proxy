@@ -130,11 +130,7 @@ func (w *Watcher) reconcile(ctx context.Context, b provider.BatchChange) {
 
 // updateRoute applies a single Change after a naive TCP healthcheck
 func (w *Watcher) updateRoute(ctx context.Context, c provider.Change) {
-	source := ""
-	if c.Route != nil {
-		source = c.Route.Source
-	}
-	logger := w.logger.With("source", source, "host", c.Host)
+	logger := w.logger.With("host", c.Host)
 	switch c.Op {
 	case provider.OpRegister:
 		for _, b := range c.Route.Backends {
@@ -144,14 +140,14 @@ func (w *Watcher) updateRoute(ctx context.Context, c provider.Change) {
 			}
 		}
 		w.reg.Register(c.Route)
-		logger.Info("registered route", "backends", len(c.Route.Backends), "targets", c.Route.Backends)
+		logger.Info("registered route", "route", c.Route)
 	case provider.OpDeregister:
 		var target *url.URL
 		if c.Route != nil {
 			target = c.Route.Backends[0].Target
 		}
 		w.reg.Deregister(c.Host, target)
-		logger.Info("deregistered route", "target", c.Route)
+		logger.Info("deregistered route", "route", c.Route)
 	default:
 		logger.Warn("unknown change op", "op", c.Op)
 	}
