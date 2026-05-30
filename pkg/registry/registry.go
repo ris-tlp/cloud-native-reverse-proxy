@@ -2,6 +2,8 @@
 package registry
 
 import (
+	"net/url"
+	"slices"
 	"sync"
 )
 
@@ -17,13 +19,31 @@ func NewRegistry() *Registry {
 func (r *Registry) Register(route *Route) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.routes[route.Host] = route
+	existingRoute, ok := r.routes[route.Host]
+	if ok {
+		for _, b := range route.Backends {
+			existingRoute.AddBackend(b)
+		}
+	} else {
+		r.routes[route.Host] = route
+	}
 }
 
-func (r *Registry) Deregister(host string) {
+func (r *Registry) Deregister(host string, target *url.URL) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.routes, host)
+	route, ok := r.routes[host]
+	if !ok {
+		return
+	}
+	if target == nil || len(route.Backends) <= 1 {
+		delete(r.routes, host)
+		return
+	}
+	// remove just this backend
+	route.Backends = slices.DeleteFunc(route.Backends, func(b *Backend) bool {
+		return b.Target.String() == target.String()
+	})
 }
 
 func (r *Registry) Lookup(host string) *Route {

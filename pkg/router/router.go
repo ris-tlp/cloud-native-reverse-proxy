@@ -30,7 +30,12 @@ func proxyHandler(reg *registry.Registry) http.Handler {
 			http.NotFound(w, req)
 			return
 		}
-		route.Proxy.ServeHTTP(w, req)
+		backend := route.LoadBalancer.Pick(route.Backends)
+		if backend == nil {
+			http.NotFound(w, req)
+			return
+		}
+		backend.Proxy.ServeHTTP(w, req)
 	})
 }
 

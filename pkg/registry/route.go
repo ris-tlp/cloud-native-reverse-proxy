@@ -22,6 +22,15 @@ func NewRoute(host string, target *url.URL, source string, loadBalancer LoadBala
 	}
 }
 
+func (route *Route) AddBackend(backend *Backend) {
+	for _, b := range route.Backends {
+		if b.Target.String() == backend.Target.String() {
+			return
+		}
+	}
+	route.Backends = append(route.Backends, backend)
+}
+
 type Backend struct {
 	Target *url.URL
 	Proxy  proxy.Proxy

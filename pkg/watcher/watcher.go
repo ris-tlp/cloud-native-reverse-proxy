@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
 	"sync"
 	"time"
 
@@ -110,14 +111,20 @@ func (w *Watcher) updateRoute(ctx context.Context, c provider.Change) {
 	logger := w.logger.With("source", c.Source, "host", c.Host)
 	switch c.Op {
 	case provider.OpRegister:
-		if err := c.Route.Proxy.Check(ctx); err != nil {
-			logger.Warn("health check failed, skipping registration", "target", c.Route.Target, "err", err)
-			return
+		for _, b := range c.Route.Backends {
+			if err := b.Proxy.Check(ctx); err != nil {
+				logger.Warn("health check failed, skipping registration", "target", b.Target, "err", err)
+				return
+			}
 		}
 		w.reg.Register(c.Route)
-		logger.Info("registered route", "target", c.Route.Target)
+		logger.Info("registered route", "backends", len(c.Route.Backends))
 	case provider.OpDeregister:
-		w.reg.Deregister(c.Host)
+		var target *url.URL
+		if c.Route != nil {
+			target = c.Route.Backends[0].Target
+		}
+		w.reg.Deregister(c.Host, target)
 		logger.Info("deregistered route", "host", c.Host)
 	default:
 		logger.Warn("unknown change op", "op", c.Op)

@@ -137,20 +137,16 @@ func (dp *DockerProvider) emitRegister(ctx context.Context, containerID string, 
 }
 
 func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string, watcherBuffer chan<- Event, logger *slog.Logger) {
-	inspectCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
-	defer cancel()
-	info, err := dp.client.ContainerInspect(inspectCtx, containerID, client.ContainerInspectOptions{})
+	route, err := dp.inspectRoute(ctx, containerID)
+	if errors.Is(err, errSkipContainer) {
+		return
+	}
 	if err != nil {
-		logger.Error("inspect failed", "id", containerID, "err", err)
+		logger.Error("inspect route failed", "id", containerID, "err", err)
 		return
 	}
 
-	host, ok := info.Container.Config.Labels[HostLabel]
-	if !ok {
-		return
-	}
-
-	emit(ctx, watcherBuffer, Change{Op: OpDeregister, Source: dp.name, Host: host})
+	emit(ctx, watcherBuffer, Change{Op: OpDeregister, Source: dp.name, Host: route.Host, Route: route})
 }
 
 // reconcile emits the full route set for this source so the watcher can correct drift

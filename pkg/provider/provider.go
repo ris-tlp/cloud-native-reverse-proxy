@@ -23,7 +23,7 @@ type Event interface {
 // Change is a single incremental update emitted per container event
 type Change struct {
 	Op     ChangeOp
-	Source string // name of the emitting provider
+	Source string
 	Host   string
 	Route  *registry.Route
 }
