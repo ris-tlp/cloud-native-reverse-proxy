@@ -16,6 +16,7 @@ func NewRegistry() *Registry {
 	return &Registry{routes: map[string]*Route{}}
 }
 
+// Register adds a backend to an existing route entry or creates a new entry
 func (r *Registry) Register(route *Route) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -29,6 +30,7 @@ func (r *Registry) Register(route *Route) {
 	}
 }
 
+// Deregister removes a backend with the target URL or removes the route entirely
 func (r *Registry) Deregister(host string, target *url.URL) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

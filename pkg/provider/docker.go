@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -77,13 +79,13 @@ func (dp *DockerProvider) Watch(ctx context.Context, watcherBuffer chan<- Event,
 	}
 }
 
-// Only react to start, stop, and die container events
+// Only react to start and die container events
 func isContainerAction(msg events.Message) bool {
 	if msg.Type != events.ContainerEventType {
 		return false
 	}
 	switch msg.Action {
-	case events.ActionStart, events.ActionStop, events.ActionDie:
+	case events.ActionStart, events.ActionDie:
 		return true
 	}
 	return false
@@ -104,7 +106,8 @@ func (dp *DockerProvider) processEvents(ctx context.Context, innerBuffer <-chan 
 	ticker := time.NewTicker(reconcileInterval)
 	defer ticker.Stop()
 
-	dp.reconcile(ctx, watcherBuffer, logger) // initial sync to seed the registry
+	// initial sync to seed the registry
+	dp.reconcile(ctx, watcherBuffer, logger)
 
 	for {
 		select {
@@ -114,7 +117,7 @@ func (dp *DockerProvider) processEvents(ctx context.Context, innerBuffer <-chan 
 			switch msg.Action {
 			case events.ActionStart:
 				dp.emitRegister(ctx, msg.Actor.ID, watcherBuffer, logger)
-			case events.ActionStop, events.ActionDie:
+			case events.ActionDie:
 				dp.emitDeregister(ctx, msg.Actor.ID, watcherBuffer, logger)
 			}
 		case <-ticker.C:
@@ -153,13 +156,14 @@ func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string
 func (dp *DockerProvider) reconcile(ctx context.Context, watcherBuffer chan<- Event, logger *slog.Logger) {
 	listCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
 	defer cancel()
+
 	list, err := dp.client.ContainerList(listCtx, client.ContainerListOptions{})
 	if err != nil {
 		logger.Error("reconcile list failed", "err", err)
 		return
 	}
 
-	routes := make([]*registry.Route, 0, len(list.Items))
+	routeMap := make(map[string]*registry.Route)
 	for _, c := range list.Items {
 		route, err := dp.inspectRoute(ctx, c.ID)
 		if errors.Is(err, errSkipContainer) {
@@ -169,10 +173,22 @@ func (dp *DockerProvider) reconcile(ctx context.Context, watcherBuffer chan<- Ev
 			logger.Error("inspect route failed", "id", c.ID, "err", err)
 			continue
 		}
-		routes = append(routes, route)
+		if existing, ok := routeMap[route.Host]; ok {
+			existing.AddBackend(route.Backends[0])
+		} else {
+			routeMap[route.Host] = route
+		}
 	}
 
-	emit(ctx, watcherBuffer, BatchChange{Source: dp.name, Routes: routes})
+	emit(ctx, watcherBuffer, BatchChange{Source: dp.name, Routes: slices.Collect(maps.Values(routeMap))})
+}
+
+// emit performs a cancellable blocking send to the framework channel
+func emit(ctx context.Context, watcherBuffer chan<- Event, e Event) {
+	select {
+	case watcherBuffer <- e:
+	case <-ctx.Done():
+	}
 }
 
 // inspectRoute inspects a container and translates it into a route
@@ -184,14 +200,6 @@ func (dp *DockerProvider) inspectRoute(ctx context.Context, containerID string) 
 		return nil, err
 	}
 	return parseRoute(info.Container, dp.name)
-}
-
-// emit performs a cancellable blocking send to the framework channel.
-func emit(ctx context.Context, watcherBuffer chan<- Event, e Event) {
-	select {
-	case watcherBuffer <- e:
-	case <-ctx.Done():
-	}
 }
 
 func parseRoute(info container.InspectResponse, source string) (*registry.Route, error) {

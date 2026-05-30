@@ -98,10 +98,32 @@ func (w *Watcher) reconcile(ctx context.Context, b provider.BatchChange) {
 		w.updateRoute(ctx, provider.Change{Op: provider.OpRegister, Source: b.Source, Host: route.Host, Route: route})
 	}
 
-	// drop orphans: registered for this source but absent from the batch
+	// drop orphan hosts
 	for _, host := range w.reg.HostsBySource(b.Source) {
 		if _, ok := desired[host]; !ok {
 			w.updateRoute(ctx, provider.Change{Op: provider.OpDeregister, Source: b.Source, Host: host})
+		}
+	}
+
+	// drop orphan backends
+	for host, desiredRoute := range desired {
+		existing := w.reg.Lookup(host)
+		if existing == nil {
+			continue
+		}
+		desiredTargets := make(map[string]struct{}, len(desiredRoute.Backends))
+		for _, b := range desiredRoute.Backends {
+			desiredTargets[b.Target.String()] = struct{}{}
+		}
+		var stale []*registry.Backend
+		for _, b := range existing.Backends {
+			if _, ok := desiredTargets[b.Target.String()]; !ok {
+				stale = append(stale, b)
+			}
+		}
+		for _, b := range stale {
+			w.reg.Deregister(host, b.Target)
+			w.logger.Info("deregistered stale backend", "host", host, "target", b.Target.Host)
 		}
 	}
 }
@@ -118,14 +140,14 @@ func (w *Watcher) updateRoute(ctx context.Context, c provider.Change) {
 			}
 		}
 		w.reg.Register(c.Route)
-		logger.Info("registered route", "backends", len(c.Route.Backends))
+		logger.Info("registered route", "backends", len(c.Route.Backends), "targets", c.Route.Backends)
 	case provider.OpDeregister:
 		var target *url.URL
 		if c.Route != nil {
 			target = c.Route.Backends[0].Target
 		}
 		w.reg.Deregister(c.Host, target)
-		logger.Info("deregistered route", "host", c.Host)
+		logger.Info("deregistered route", "target", c.Route)
 	default:
 		logger.Warn("unknown change op", "op", c.Op)
 	}
