@@ -25,7 +25,7 @@ var errSkipContainer = errors.New("container not configured for proxy")
 
 const (
 	inspectTimeout    = 5 * time.Second
-	reconcileInterval = 2 * time.Second
+	reconcileInterval = 30 * time.Second
 	innerBufferSize   = 100
 	HostLabel         = "proxy.host"
 	PortLabel         = "proxy.port"
@@ -79,13 +79,13 @@ func (dp *DockerProvider) Watch(ctx context.Context, watcherBuffer chan<- Event,
 	}
 }
 
-// Only react to start and die container events
+// Only react to start and kill container events
 func isContainerAction(msg events.Message) bool {
 	if msg.Type != events.ContainerEventType {
 		return false
 	}
 	switch msg.Action {
-	case events.ActionStart, events.ActionDie:
+	case events.ActionStart, events.ActionKill:
 		return true
 	}
 	return false
@@ -117,7 +117,7 @@ func (dp *DockerProvider) processEvents(ctx context.Context, innerBuffer <-chan 
 			switch msg.Action {
 			case events.ActionStart:
 				dp.emitRegister(ctx, msg.Actor.ID, watcherBuffer, logger)
-			case events.ActionDie:
+			case events.ActionKill:
 				dp.emitDeregister(ctx, msg.Actor.ID, watcherBuffer, logger)
 			}
 		case <-ticker.C:
