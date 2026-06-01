@@ -15,6 +15,8 @@ import (
 	"cloud-native-reverse-proxy/pkg/router"
 	"cloud-native-reverse-proxy/pkg/server"
 	"cloud-native-reverse-proxy/pkg/watcher"
+
+	"github.com/moby/moby/client"
 )
 
 func main() {
@@ -30,11 +32,12 @@ func main() {
 	r := router.New(reg)
 	srv := server.New(":8080", r)
 
-	dockerProvider, err := provider.NewDockerProvider("docker")
+	dockerCli, err := client.New(client.FromEnv)
 	if err != nil {
-		slog.Error("failed to create docker provider", "err", err)
+		slog.Error("failed to create docker client", "err", err)
 		os.Exit(1)
 	}
+	dockerProvider := provider.NewDockerProvider("docker", dockerCli)
 
 	w := watcher.NewWatcher(reg, logger, dockerProvider)
 	go func() {

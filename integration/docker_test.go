@@ -34,9 +34,7 @@ func TestMain(m *testing.M) {
 
 func newDockerProvider(t *testing.T) *provider.DockerProvider {
 	t.Helper()
-	dp, err := provider.NewDockerProvider("docker")
-	require.NoError(t, err)
-	return dp
+	return provider.NewDockerProvider("docker", testutil.NewDockerClient(t))
 }
 
 func runWatch(t *testing.T, dp *provider.DockerProvider) <-chan provider.Event {

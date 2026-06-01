@@ -34,17 +34,21 @@ const (
 
 var _ Provider = (*DockerProvider)(nil)
 
+type dockerClient interface {
+	Events(ctx context.Context, options client.EventsListOptions) client.EventsResult
+	ContainerList(ctx context.Context, options client.ContainerListOptions) (client.ContainerListResult, error)
+	ContainerInspect(ctx context.Context, containerID string, options client.ContainerInspectOptions) (client.ContainerInspectResult, error)
+}
+
+var _ dockerClient = (*client.Client)(nil)
+
 type DockerProvider struct {
-	client *client.Client
+	client dockerClient
 	name   string
 }
 
-func NewDockerProvider(name string) (*DockerProvider, error) {
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		return nil, err
-	}
-	return &DockerProvider{client: cli, name: name}, nil
+func NewDockerProvider(name string, cli dockerClient) *DockerProvider {
+	return &DockerProvider{client: cli, name: name}
 }
 
 func (dp *DockerProvider) Name() string { return dp.name }
