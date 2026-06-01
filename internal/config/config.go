@@ -21,7 +21,8 @@ type ProvidersConfig struct {
 }
 
 type DockerConfig struct {
-	Enabled bool `toml:"enabled"`
+	Enabled bool   `toml:"enabled"`
+	Host    string `toml:"host"`
 }
 
 func defaults() Config {

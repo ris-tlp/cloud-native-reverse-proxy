@@ -39,7 +39,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	providers, err := provider.Build(cfg.Providers)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	providers, err := provider.Build(ctx, cfg.Providers)
 	if err != nil {
 		slog.Error("failed to build providers", "err", err)
 		os.Exit(1)
@@ -47,9 +50,6 @@ func main() {
 	if len(providers) == 0 {
 		slog.Warn("no providers enabled")
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	reg := registry.NewRegistry()
 	r := router.New(reg)
