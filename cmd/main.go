@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,36 +12,50 @@ import (
 	"syscall"
 	"time"
 
+	"cloud-native-reverse-proxy/internal/config"
 	"cloud-native-reverse-proxy/pkg/provider"
 	"cloud-native-reverse-proxy/pkg/registry"
 	"cloud-native-reverse-proxy/pkg/router"
 	"cloud-native-reverse-proxy/pkg/server"
 	"cloud-native-reverse-proxy/pkg/watcher"
-
-	"github.com/moby/moby/client"
 )
 
 func main() {
+	configPath := flag.String("config", "cnrp.toml", "path to config file")
+	flag.Parse()
+
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})))
 	logger := slog.Default()
+
+	if _, err := os.Stat(*configPath); os.IsNotExist(err) {
+		slog.Warn("no config file found, using defaults", "path", *configPath)
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		slog.Error("config file is malformed, fix or delete it to use defaults", "path", *configPath, "err", err)
+		os.Exit(1)
+	}
+
+	providers, err := provider.Build(cfg.Providers)
+	if err != nil {
+		slog.Error("failed to build providers", "err", err)
+		os.Exit(1)
+	}
+	if len(providers) == 0 {
+		slog.Warn("no providers enabled")
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	reg := registry.NewRegistry()
 	r := router.New(reg)
-	srv := server.New(":8080", r)
+	srv := server.New(fmt.Sprintf(":%d", cfg.Server.Port), r)
 
-	dockerCli, err := client.New(client.FromEnv)
-	if err != nil {
-		slog.Error("failed to create docker client", "err", err)
-		os.Exit(1)
-	}
-	dockerProvider := provider.NewDockerProvider("docker", dockerCli)
-
-	w := watcher.NewWatcher(reg, logger, dockerProvider)
+	w := watcher.NewWatcher(reg, logger, providers...)
 	go func() {
 		if err := w.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("watcher error", "err", err)
