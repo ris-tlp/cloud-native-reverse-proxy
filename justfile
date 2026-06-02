@@ -68,7 +68,8 @@ run-container: stop-container
         --name {{proxy_container}} \
         -p 8080:8080 \
         -v /var/run/docker.sock:/var/run/docker.sock \
-        {{proxy_image}}
+        -v $(pwd)/cnrp.toml:/cnrp.toml \
+        {{proxy_image}} -config /cnrp.toml
     docker logs -f {{proxy_container}}
 
 [group('containers')]
