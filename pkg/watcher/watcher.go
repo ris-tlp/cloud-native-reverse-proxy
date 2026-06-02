@@ -4,6 +4,7 @@ package watcher
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"sync"
@@ -18,7 +19,6 @@ import (
 
 const (
 	watcherBufferSize = 100
-	watchMaxElapsed   = 10 * time.Minute
 )
 
 type Watcher struct {
@@ -55,20 +55,25 @@ func (w *Watcher) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// runProvider wraps a provider's Watch in exponential backoff
 func (w *Watcher) runProvider(ctx context.Context, p provider.Provider, watcherBuffer chan<- provider.Event) {
 	logger := w.logger.With("source", p.Name())
-
-	b := backoff.WithContext(
-		backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(watchMaxElapsed)),
-		ctx,
-	)
-	err := backoff.Retry(func() error {
-		return p.Watch(ctx, watcherBuffer, logger)
-	}, b)
+	b := backoff.WithContext(backoff.NewExponentialBackOff(backoff.WithMaxElapsedTime(0)), ctx)
+	notify := func(err error, d time.Duration) {
+		logger.Warn("provider disconnected, retrying", "err", err, "in", d)
+	}
+	err := backoff.RetryNotify(func() error { return recoverableWatch(ctx, p, watcherBuffer, logger) }, b, notify)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		logger.Error("provider stopped", "err", err)
 	}
+}
+
+func recoverableWatch(ctx context.Context, p provider.Provider, watcherBuffer chan<- provider.Event, logger *slog.Logger) (retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return p.Watch(ctx, watcherBuffer, logger)
 }
 
 // updateRegistry is the single mutator of the registry
