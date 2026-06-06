@@ -1,4 +1,4 @@
-package provider
+package docker
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"cloud-native-reverse-proxy/internal/testutil"
+	"cloud-native-reverse-proxy/pkg/provider"
 	"cloud-native-reverse-proxy/pkg/registry"
 
 	"github.com/moby/moby/api/types/container"
@@ -112,18 +113,18 @@ func TestTrySend(t *testing.T) {
 
 func TestEmit(t *testing.T) {
 	t.Run("sends when context is active", func(t *testing.T) {
-		ch := make(chan Event, 1)
-		ev := Change{Op: OpRegister, Host: "app.localhost"}
+		ch := make(chan provider.Event, 1)
+		ev := provider.Change{Op: provider.OpRegister, Host: "app.localhost"}
 		emit(context.Background(), ch, ev)
 		require.Len(t, ch, 1)
 		assert.Equal(t, ev, <-ch)
 	})
 
 	t.Run("does not block when context is cancelled", func(t *testing.T) {
-		ch := make(chan Event)
+		ch := make(chan provider.Event)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		emit(ctx, ch, Change{Op: OpRegister, Host: "app.localhost"})
+		emit(ctx, ch, provider.Change{Op: provider.OpRegister, Host: "app.localhost"})
 		assert.Len(t, ch, 0)
 	})
 }
@@ -293,7 +294,7 @@ func TestInspectRoute(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dp := NewDockerProvider("docker",&fakeDockerClient{inspectFn: tc.inspectFn})
+			dp := New("docker", &fakeDockerClient{inspectFn: tc.inspectFn})
 			route, err := dp.inspectRoute(context.Background(), "abc123")
 			if tc.checkErr != nil {
 				require.Error(t, err)
@@ -311,7 +312,7 @@ func TestEmitRegister(t *testing.T) {
 	tests := []struct {
 		name      string
 		inspectFn func(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error)
-		wantOp    ChangeOp
+		wantOp    provider.ChangeOp
 		wantSent  bool
 	}{
 		{
@@ -319,7 +320,7 @@ func TestEmitRegister(t *testing.T) {
 			inspectFn: func(_ context.Context, _ string, _ client.ContainerInspectOptions) (client.ContainerInspectResult, error) {
 				return inspectResult(proxyLabels("app.localhost", "3000")), nil
 			},
-			wantOp:   OpRegister,
+			wantOp:   provider.OpRegister,
 			wantSent: true,
 		},
 		{
@@ -340,15 +341,15 @@ func TestEmitRegister(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dp := NewDockerProvider("docker",&fakeDockerClient{inspectFn: tc.inspectFn})
-			ch := make(chan Event, 1)
+			dp := New("docker", &fakeDockerClient{inspectFn: tc.inspectFn})
+			ch := make(chan provider.Event, 1)
 			dp.emitRegister(context.Background(), "abc123", ch, testutil.DiscardLogger())
 			if !tc.wantSent {
 				assert.Empty(t, ch)
 				return
 			}
 			require.Len(t, ch, 1)
-			change, ok := (<-ch).(Change)
+			change, ok := (<-ch).(provider.Change)
 			require.True(t, ok)
 			assert.Equal(t, tc.wantOp, change.Op)
 			assert.Equal(t, "app.localhost", change.Host)
@@ -387,17 +388,17 @@ func TestEmitDeregister(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dp := NewDockerProvider("docker",&fakeDockerClient{inspectFn: tc.inspectFn})
-			ch := make(chan Event, 1)
+			dp := New("docker", &fakeDockerClient{inspectFn: tc.inspectFn})
+			ch := make(chan provider.Event, 1)
 			dp.emitDeregister(context.Background(), "abc123", ch, testutil.DiscardLogger())
 			if !tc.wantSent {
 				assert.Empty(t, ch)
 				return
 			}
 			require.Len(t, ch, 1)
-			change, ok := (<-ch).(Change)
+			change, ok := (<-ch).(provider.Change)
 			require.True(t, ok)
-			assert.Equal(t, OpDeregister, change.Op)
+			assert.Equal(t, provider.OpDeregister, change.Op)
 			assert.Equal(t, "app.localhost", change.Host)
 		})
 	}
@@ -409,7 +410,7 @@ func TestReconcile(t *testing.T) {
 		listFn    func(context.Context, client.ContainerListOptions) (client.ContainerListResult, error)
 		inspectFn func(context.Context, string, client.ContainerInspectOptions) (client.ContainerInspectResult, error)
 		wantSent  bool
-		check     func(*testing.T, BatchChange)
+		check     func(*testing.T, provider.BatchChange)
 	}{
 		{
 			name: "empty list emits empty batch",
@@ -417,7 +418,7 @@ func TestReconcile(t *testing.T) {
 				return client.ContainerListResult{}, nil
 			},
 			wantSent: true,
-			check: func(t *testing.T, batch BatchChange) {
+			check: func(t *testing.T, batch provider.BatchChange) {
 				assert.Equal(t, "docker", batch.Source)
 				assert.Empty(t, batch.Routes)
 			},
@@ -431,7 +432,7 @@ func TestReconcile(t *testing.T) {
 				return inspectResult(proxyLabels("app.localhost", "3000")), nil
 			},
 			wantSent: true,
-			check: func(t *testing.T, batch BatchChange) {
+			check: func(t *testing.T, batch provider.BatchChange) {
 				require.Len(t, batch.Routes, 1)
 				assert.Equal(t, "app.localhost", batch.Routes[0].Host)
 			},
@@ -445,7 +446,7 @@ func TestReconcile(t *testing.T) {
 				return inspectResult(map[string]string{}), nil
 			},
 			wantSent: true,
-			check: func(t *testing.T, batch BatchChange) {
+			check: func(t *testing.T, batch provider.BatchChange) {
 				assert.Empty(t, batch.Routes)
 			},
 		},
@@ -459,7 +460,7 @@ func TestReconcile(t *testing.T) {
 				return inspectResultWithIP(proxyLabels("app.localhost", "3000"), ip), nil
 			},
 			wantSent: true,
-			check: func(t *testing.T, batch BatchChange) {
+			check: func(t *testing.T, batch provider.BatchChange) {
 				require.Len(t, batch.Routes, 1)
 				assert.Len(t, batch.Routes[0].Backends, 2)
 			},
@@ -475,18 +476,18 @@ func TestReconcile(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			dp := NewDockerProvider("docker",&fakeDockerClient{
+			dp := New("docker", &fakeDockerClient{
 				listFn:    tc.listFn,
 				inspectFn: tc.inspectFn,
 			})
-			ch := make(chan Event, 1)
+			ch := make(chan provider.Event, 1)
 			dp.reconcile(context.Background(), ch, testutil.DiscardLogger())
 			if !tc.wantSent {
 				assert.Empty(t, ch)
 				return
 			}
 			require.Len(t, ch, 1)
-			batch, ok := (<-ch).(BatchChange)
+			batch, ok := (<-ch).(provider.BatchChange)
 			require.True(t, ok)
 			tc.check(t, batch)
 		})

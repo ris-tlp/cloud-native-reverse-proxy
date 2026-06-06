@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"cloud-native-reverse-proxy/internal/config"
-	"cloud-native-reverse-proxy/pkg/provider"
 	"cloud-native-reverse-proxy/pkg/registry"
 	"cloud-native-reverse-proxy/pkg/router"
 	"cloud-native-reverse-proxy/pkg/server"
@@ -42,7 +41,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	providers, err := provider.Build(ctx, cfg.Providers)
+	providers, err := buildProviders(ctx, cfg.Providers)
 	if err != nil {
 		slog.Error("failed to build providers", "err", err)
 		os.Exit(1)

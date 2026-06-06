@@ -17,8 +17,8 @@ type ServerConfig struct {
 }
 
 type ProvidersConfig struct {
-	Docker            DockerConfig     `toml:"docker"`
-	KubernetesIngress KubernetesConfig `toml:"kubernetes"`
+	Docker     DockerConfig     `toml:"docker"`
+	Kubernetes KubernetesConfig `toml:"kubernetes"`
 }
 
 type DockerConfig struct {
@@ -31,9 +31,9 @@ type KubernetesConfig struct {
 }
 
 type IngressConfig struct {
-	Enabled      bool     `toml:"enabled"`
-	IngressClass string   `toml:"ingressClass"`
-	Namespaces   []string `toml:"namespaces"`
+	Enabled      bool   `toml:"enabled"`
+	IngressClass string `toml:"ingressClass"`
+	Namespace    string `toml:"namespace"`
 }
 
 func defaults() Config {

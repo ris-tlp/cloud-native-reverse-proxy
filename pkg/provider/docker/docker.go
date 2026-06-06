@@ -1,4 +1,4 @@
-package provider
+package docker
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"time"
 
+	"cloud-native-reverse-proxy/pkg/provider"
 	"cloud-native-reverse-proxy/pkg/registry"
 
 	"github.com/moby/moby/api/types/container"
@@ -32,7 +33,7 @@ const (
 	LoadBalancerLabel = "proxy.loadbalancer"
 )
 
-var _ Provider = (*DockerProvider)(nil)
+var _ provider.Provider = (*Provider)(nil)
 
 type dockerClient interface {
 	Events(ctx context.Context, options client.EventsListOptions) client.EventsResult
@@ -42,18 +43,18 @@ type dockerClient interface {
 
 var _ dockerClient = (*client.Client)(nil)
 
-type DockerProvider struct {
+type Provider struct {
 	client dockerClient
 	name   string
 }
 
-func NewDockerProvider(name string, cli dockerClient) *DockerProvider {
-	return &DockerProvider{client: cli, name: name}
+func New(name string, cli dockerClient) *Provider {
+	return &Provider{client: cli, name: name}
 }
 
-func (dp *DockerProvider) Name() string { return dp.name }
+func (dp *Provider) Name() string { return dp.name }
 
-func (dp *DockerProvider) Watch(ctx context.Context, watcherBuffer chan<- Event, logger *slog.Logger) error {
+func (dp *Provider) Watch(ctx context.Context, watcherBuffer chan<- provider.Event, logger *slog.Logger) error {
 	watchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -73,7 +74,6 @@ func (dp *DockerProvider) Watch(ctx context.Context, watcherBuffer chan<- Event,
 			if !isContainerAction(msg) {
 				continue
 			}
-			// Will drop backpressured event and eventually reconcile
 			if !trySend(innerBuffer, msg) {
 				logger.Warn("inner buffer full, dropping event",
 					"action", msg.Action, "id", msg.Actor.ID,
@@ -83,7 +83,6 @@ func (dp *DockerProvider) Watch(ctx context.Context, watcherBuffer chan<- Event,
 	}
 }
 
-// Only react to start and kill container events
 func isContainerAction(msg events.Message) bool {
 	if msg.Type != events.ContainerEventType {
 		return false
@@ -95,7 +94,6 @@ func isContainerAction(msg events.Message) bool {
 	return false
 }
 
-// Attempt sending event to internal buffer, will fail if backpressured
 func trySend(innerBuffer chan<- events.Message, msg events.Message) bool {
 	select {
 	case innerBuffer <- msg:
@@ -105,12 +103,10 @@ func trySend(innerBuffer chan<- events.Message, msg events.Message) bool {
 	}
 }
 
-// Reads filtered container events from internal buffer and sends out Change events to watcher channel
-func (dp *DockerProvider) processEvents(ctx context.Context, innerBuffer <-chan events.Message, watcherBuffer chan<- Event, logger *slog.Logger) {
+func (dp *Provider) processEvents(ctx context.Context, innerBuffer <-chan events.Message, watcherBuffer chan<- provider.Event, logger *slog.Logger) {
 	ticker := time.NewTicker(reconcileInterval)
 	defer ticker.Stop()
 
-	// initial sync to seed the registry
 	dp.reconcile(ctx, watcherBuffer, logger)
 
 	for {
@@ -130,7 +126,7 @@ func (dp *DockerProvider) processEvents(ctx context.Context, innerBuffer <-chan 
 	}
 }
 
-func (dp *DockerProvider) emitRegister(ctx context.Context, containerID string, watcherBuffer chan<- Event, logger *slog.Logger) {
+func (dp *Provider) emitRegister(ctx context.Context, containerID string, watcherBuffer chan<- provider.Event, logger *slog.Logger) {
 	route, err := dp.inspectRoute(ctx, containerID)
 	if errors.Is(err, errSkipContainer) {
 		return
@@ -140,10 +136,10 @@ func (dp *DockerProvider) emitRegister(ctx context.Context, containerID string, 
 		return
 	}
 
-	emit(ctx, watcherBuffer, Change{Op: OpRegister, Host: route.Host, Route: route})
+	emit(ctx, watcherBuffer, provider.Change{Op: provider.OpRegister, Host: route.Host, Route: route})
 }
 
-func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string, watcherBuffer chan<- Event, logger *slog.Logger) {
+func (dp *Provider) emitDeregister(ctx context.Context, containerID string, watcherBuffer chan<- provider.Event, logger *slog.Logger) {
 	route, err := dp.inspectRoute(ctx, containerID)
 	if errors.Is(err, errSkipContainer) {
 		return
@@ -153,11 +149,10 @@ func (dp *DockerProvider) emitDeregister(ctx context.Context, containerID string
 		return
 	}
 
-	emit(ctx, watcherBuffer, Change{Op: OpDeregister, Host: route.Host, Route: route})
+	emit(ctx, watcherBuffer, provider.Change{Op: provider.OpDeregister, Host: route.Host, Route: route})
 }
 
-// reconcile emits the full route set for this source so the watcher can correct drift
-func (dp *DockerProvider) reconcile(ctx context.Context, watcherBuffer chan<- Event, logger *slog.Logger) {
+func (dp *Provider) reconcile(ctx context.Context, watcherBuffer chan<- provider.Event, logger *slog.Logger) {
 	listCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
 	defer cancel()
 
@@ -184,19 +179,17 @@ func (dp *DockerProvider) reconcile(ctx context.Context, watcherBuffer chan<- Ev
 		}
 	}
 
-	emit(ctx, watcherBuffer, BatchChange{Source: dp.name, Routes: slices.Collect(maps.Values(routeMap))})
+	emit(ctx, watcherBuffer, provider.BatchChange{Source: dp.name, Routes: slices.Collect(maps.Values(routeMap))})
 }
 
-// emit performs a cancellable blocking send to the framework channel
-func emit(ctx context.Context, watcherBuffer chan<- Event, e Event) {
+func emit(ctx context.Context, watcherBuffer chan<- provider.Event, e provider.Event) {
 	select {
 	case watcherBuffer <- e:
 	case <-ctx.Done():
 	}
 }
 
-// inspectRoute inspects a container and translates it into a route
-func (dp *DockerProvider) inspectRoute(ctx context.Context, containerID string) (*registry.Route, error) {
+func (dp *Provider) inspectRoute(ctx context.Context, containerID string) (*registry.Route, error) {
 	inspectCtx, cancel := context.WithTimeout(ctx, inspectTimeout)
 	defer cancel()
 	info, err := dp.client.ContainerInspect(inspectCtx, containerID, client.ContainerInspectOptions{})

@@ -1,4 +1,4 @@
-package provider
+package main
 
 import (
 	"context"
@@ -6,12 +6,16 @@ import (
 	"time"
 
 	"cloud-native-reverse-proxy/internal/config"
+	"cloud-native-reverse-proxy/pkg/provider"
+	dockerprovider "cloud-native-reverse-proxy/pkg/provider/docker"
 
 	"github.com/moby/moby/client"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
-func Build(ctx context.Context, cfg config.ProvidersConfig) ([]Provider, error) {
-	var providers []Provider
+func buildProviders(ctx context.Context, cfg config.ProvidersConfig) ([]provider.Provider, error) {
+	var providers []provider.Provider
 
 	if cfg.Docker.Enabled {
 		opts := []client.Opt{client.FromEnv}
@@ -31,7 +35,19 @@ func Build(ctx context.Context, cfg config.ProvidersConfig) ([]Provider, error) 
 			}
 			return nil, fmt.Errorf("docker: cannot reach host %q: %w", host, err)
 		}
-		providers = append(providers, NewDockerProvider("docker", cli))
+		providers = append(providers, dockerprovider.New("docker", cli))
+	}
+
+	if cfg.Kubernetes.Ingress.Enabled {
+		clusterCfg, err := rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("kubernetes: %w", err)
+		}
+		clientset, err := kubernetes.NewForConfig(clusterCfg)
+		if err != nil {
+			return nil, fmt.Errorf("kubernetes: %w", err)
+		}
+		_ = clientset
 	}
 
 	return providers, nil
