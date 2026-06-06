@@ -4,3 +4,8 @@ port = 8080
 [providers.docker]
 enabled = true
 host = "unix:///var/run/docker.sock"
+
+[providers.kubernetes.ingress]
+enabled = true
+ingressClass = "cnrp"
+namespaces = []
