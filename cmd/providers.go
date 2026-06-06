@@ -7,7 +7,7 @@ import (
 
 	"cloud-native-reverse-proxy/internal/config"
 	"cloud-native-reverse-proxy/pkg/provider"
-	dockerprovider "cloud-native-reverse-proxy/pkg/provider/docker"
+	dockerProvider "cloud-native-reverse-proxy/pkg/provider/docker"
 
 	"github.com/moby/moby/client"
 	"k8s.io/client-go/kubernetes"
@@ -35,7 +35,7 @@ func buildProviders(ctx context.Context, cfg config.ProvidersConfig) ([]provider
 			}
 			return nil, fmt.Errorf("docker: cannot reach host %q: %w", host, err)
 		}
-		providers = append(providers, dockerprovider.New("docker", cli))
+		providers = append(providers, dockerProvider.New("docker", cli))
 	}
 
 	if cfg.Kubernetes.Ingress.Enabled {

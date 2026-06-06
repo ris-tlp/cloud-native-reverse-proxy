@@ -9,7 +9,7 @@ import (
 
 	"cloud-native-reverse-proxy/internal/testutil"
 	"cloud-native-reverse-proxy/pkg/provider"
-	dockerprovider "cloud-native-reverse-proxy/pkg/provider/docker"
+	dockerProvider "cloud-native-reverse-proxy/pkg/provider/docker"
 
 	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/assert"
@@ -33,12 +33,12 @@ func TestMain(m *testing.M) {
 	m.Run()
 }
 
-func newDockerProvider(t *testing.T) *dockerprovider.Provider {
+func newDockerProvider(t *testing.T) *dockerProvider.Provider {
 	t.Helper()
-	return dockerprovider.New("docker", testutil.NewDockerClient(t))
+	return dockerProvider.New("docker", testutil.NewDockerClient(t))
 }
 
-func runWatch(t *testing.T, dp *dockerprovider.Provider) <-chan provider.Event {
+func runWatch(t *testing.T, dp *dockerProvider.Provider) <-chan provider.Event {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
@@ -49,8 +49,8 @@ func runWatch(t *testing.T, dp *dockerprovider.Provider) <-chan provider.Event {
 
 func TestDockerProvider_InitialSync(t *testing.T) {
 	cli := testutil.NewDockerClient(t)
-	testutil.StartContainer(t, cli, testImage, map[string]string{dockerprovider.HostLabel: "app.localhost", dockerprovider.PortLabel: "3000"})
-	testutil.StartContainer(t, cli, testImage, map[string]string{dockerprovider.HostLabel: "api.localhost", dockerprovider.PortLabel: "8080"})
+	testutil.StartContainer(t, cli, testImage, map[string]string{dockerProvider.HostLabel: "app.localhost", dockerProvider.PortLabel: "3000"})
+	testutil.StartContainer(t, cli, testImage, map[string]string{dockerProvider.HostLabel: "api.localhost", dockerProvider.PortLabel: "8080"})
 
 	ch := runWatch(t, newDockerProvider(t))
 
@@ -77,7 +77,7 @@ func TestDockerProvider_ContainerStart(t *testing.T) {
 		return ok
 	})
 
-	testutil.StartContainer(t, cli, testImage, map[string]string{dockerprovider.HostLabel: "newapp.localhost", dockerprovider.PortLabel: "4000"})
+	testutil.StartContainer(t, cli, testImage, map[string]string{dockerProvider.HostLabel: "newapp.localhost", dockerProvider.PortLabel: "4000"})
 
 	ev := testutil.WaitForEvent(t, ch, 5*time.Second, func(ev provider.Event) bool {
 		c, ok := ev.(provider.Change)
@@ -92,7 +92,7 @@ func TestDockerProvider_ContainerStart(t *testing.T) {
 
 func TestDockerProvider_ContainerKill(t *testing.T) {
 	cli := testutil.NewDockerClient(t)
-	id := testutil.StartContainer(t, cli, testImage, map[string]string{dockerprovider.HostLabel: "killme.localhost", dockerprovider.PortLabel: "5000"})
+	id := testutil.StartContainer(t, cli, testImage, map[string]string{dockerProvider.HostLabel: "killme.localhost", dockerProvider.PortLabel: "5000"})
 
 	ch := runWatch(t, newDockerProvider(t))
 
@@ -116,8 +116,8 @@ func TestDockerProvider_ContainerKill(t *testing.T) {
 
 func TestDockerProvider_ReconcileMergesSharedHost(t *testing.T) {
 	cli := testutil.NewDockerClient(t)
-	testutil.StartContainer(t, cli, testImage, map[string]string{dockerprovider.HostLabel: "shared.localhost", dockerprovider.PortLabel: "3000"})
-	testutil.StartContainer(t, cli, testImage, map[string]string{dockerprovider.HostLabel: "shared.localhost", dockerprovider.PortLabel: "3000"})
+	testutil.StartContainer(t, cli, testImage, map[string]string{dockerProvider.HostLabel: "shared.localhost", dockerProvider.PortLabel: "3000"})
+	testutil.StartContainer(t, cli, testImage, map[string]string{dockerProvider.HostLabel: "shared.localhost", dockerProvider.PortLabel: "3000"})
 
 	ch := runWatch(t, newDockerProvider(t))
 
