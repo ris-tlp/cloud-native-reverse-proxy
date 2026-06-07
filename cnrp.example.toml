@@ -8,4 +8,4 @@ host = "unix:///var/run/docker.sock"
 [providers.kubernetes.ingress]
 enabled = true
 ingressClass = "cnrp"
-namespaces = "cnrp-namespace"
+namespace = "default"
