@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cnrp-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cnrp
+  template:
+    metadata:
+      labels:
+        app: cnrp
+    spec:
+      serviceAccountName: cnrp-sa
+      containers:
+        - name: cnrp
+          image: proxy:dev
+          imagePullPolicy: IfNotPresent
+          args: ["-config", "/etc/cnrp/cnrp.toml"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cnrp
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: cnrp-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cnrp-svc
+spec:
+  selector:
+    app: cnrp
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: NodePort
