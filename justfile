@@ -3,6 +3,45 @@ test_container := "test-app"
 proxy_container := "proxy"
 proxy_image := "proxy:dev"
 
+[group('k8s tests')]
+k8s-test-up:
+    kubectl apply -k manifests/dev/test-app
+
+[group('k8s tests')]
+k8s-test-down:
+    -kubectl delete -k manifests/dev/test-app
+
+[group('k8s tests')]
+k8s-test-curl:
+    curl -H "Host: test.localhost" http://localhost:8080
+
+[group('k8s proxy')]
+k8s-proxy-build:
+    minikube image build -t {{proxy_image}} .
+
+[group('k8s proxy')]
+k8s-proxy-up:
+    kubectl apply -k manifests/dev/cnrp
+    kubectl rollout status deployment/cnrp-deployment --timeout=60s
+
+[group('k8s proxy')]
+k8s-proxy-reload: k8s-proxy-build k8s-proxy-up
+    kubectl rollout restart deployment/cnrp-deployment
+    kubectl rollout status deployment/cnrp-deployment --timeout=60s
+
+[group('k8s proxy')]
+k8s-proxy-down:
+    -kubectl delete -k manifests/dev/cnrp
+
+[group('k8s proxy')]
+k8s-proxy-logs:
+    kubectl logs -f deployment/cnrp-deployment
+
+# port-forward the proxy Service to localhost:8080
+[group('k8s proxy')]
+k8s-proxy-forward:
+    kubectl port-forward service/cnrp-svc 8080:8080
+
 [group('automated tests')]
 test:
     go test ./...
@@ -78,7 +117,7 @@ stop-container:
     -docker rm {{proxy_container}}
 
 [group('containers')]
-clean n="3": test-down stop-container
+clean n="3": test-down stop-container k8s-proxy-down k8s-test-down
     -for i in $(seq 1 {{n}}); do \
         docker stop backend-$i && docker rm backend-$i; \
     done
