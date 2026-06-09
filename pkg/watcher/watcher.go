@@ -128,17 +128,11 @@ func (w *Watcher) reconcile(ctx context.Context, b provider.BatchChange) {
 	}
 }
 
-// updateRoute applies a single Change after a naive TCP healthcheck
+// updateRoute applies a single Change to the registry
 func (w *Watcher) updateRoute(ctx context.Context, c provider.Change) {
 	logger := w.logger.With("host", c.Host)
 	switch c.Op {
 	case provider.OpRegister:
-		for _, b := range c.Route.Backends {
-			if err := b.Proxy.Check(ctx); err != nil {
-				logger.Warn("health check failed, skipping registration", "target", b.Target, "err", err)
-				return
-			}
-		}
 		w.reg.Register(c.Route)
 		logger.Info("registered route", "route", c.Route)
 	case provider.OpDeregister:
