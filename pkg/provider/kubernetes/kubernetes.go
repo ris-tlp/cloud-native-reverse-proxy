@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -157,11 +159,18 @@ func trySend(innerBuffer chan<- watch.Event, event watch.Event) bool {
 }
 
 func (kp *Provider) emitBatch(ctx context.Context, watcherBuffer chan<- provider.Event, ingresses []netv1.Ingress) {
-	var routes []*registry.Route
+	routeMap := make(map[string]*registry.Route)
 	for i := range ingresses {
-		routes = append(routes, kp.parseRoute(&ingresses[i])...)
+		routes := kp.parseRoute(&ingresses[i])
+		for _, route := range routes {
+			if existing, ok := routeMap[route.Host]; ok {
+				existing.AddBackend(route.Backends[0])
+			} else {
+				routeMap[route.Host] = route
+			}
+		}
 	}
-	emit(ctx, watcherBuffer, provider.BatchChange{Source: kp.name, Routes: routes})
+	emit(ctx, watcherBuffer, provider.BatchChange{Source: kp.name, Routes: slices.Collect(maps.Values(routeMap))})
 }
 
 func (kp *Provider) emitRegister(ctx context.Context, ingress *netv1.Ingress, watcherBuffer chan<- provider.Event) {
