@@ -3,10 +3,16 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
+	"strconv"
 	"time"
 
 	"cloud-native-reverse-proxy/pkg/provider"
+	"cloud-native-reverse-proxy/pkg/registry"
 
 	netv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,5 +49,120 @@ func New(name string, client ingressClient, ingressClass string) *Provider {
 func (kp *Provider) Name() string { return kp.name }
 
 func (kp *Provider) Watch(ctx context.Context, watcherBuffer chan<- provider.Event, logger *slog.Logger) error {
-	return nil
+	watchCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	innerBuffer := make(chan watch.Event, innerBufferSize)
+	go kp.processEvents(watchCtx, innerBuffer, watcherBuffer, logger)
+
+	for {
+		list, err := kp.client.List(watchCtx, metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("ingress list failed: %w", err)
+		}
+
+		// Initial batch load on proxy connect
+		kp.emitBatch(watchCtx, watcherBuffer, list.Items)
+
+		w, err := kp.client.Watch(watchCtx, metav1.ListOptions{ResourceVersion: list.ResourceVersion})
+		if err != nil {
+			return fmt.Errorf("ingress watch failed: %w", err)
+		}
+
+		err = kp.drainWatch(watchCtx, w, innerBuffer, logger)
+
+		// Reconnect if connection lost
+		if errors.Is(err, errWatchClosed) {
+			logger.Warn("ingress watch closed, reconnecting")
+			continue
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (kp *Provider) processEvents(ctx context.Context, innerBuffer <-chan watch.Event, watcherBuffer chan<- provider.Event, logger *slog.Logger) {
+	ticker := time.NewTicker(reconcileInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event := <-innerBuffer:
+			ingress, ok := event.Object.(*netv1.Ingress)
+			if !ok {
+				logger.Warn("unexpected object type in watch event", "type", event.Type)
+				continue
+			}
+			switch event.Type {
+			case watch.Added, watch.Modified:
+				logger.Debug("%w", ingress)
+				kp.reconcile(ctx, watcherBuffer, logger)
+			case watch.Deleted:
+				kp.reconcile(ctx, watcherBuffer, logger)
+			}
+		case <-ticker.C:
+			kp.reconcile(ctx, watcherBuffer, logger)
+		}
+	}
+}
+
+func (kp *Provider) reconcile(ctx context.Context, watcherBuffer chan<- provider.Event, logger *slog.Logger) {
+	listCtx, cancel := context.WithTimeout(ctx, listTimeout)
+	defer cancel()
+
+	list, err := kp.client.List(listCtx, metav1.ListOptions{})
+	if err != nil {
+		logger.Error("reconcile list failed", "err", err)
+		return
+	}
+	kp.emitBatch(ctx, watcherBuffer, list.Items)
+}
+
+func (kp *Provider) emitBatch(ctx context.Context, watcherBuffer chan<- provider.Event, ingresses []netv1.Ingress) {
+	var routes []*registry.Route
+	for i := range ingresses {
+		routes = append(routes, kp.parseRoute(&ingresses[i])...)
+	}
+	emit(ctx, watcherBuffer, provider.BatchChange{Source: kp.name, Routes: routes})
+}
+
+func emit(ctx context.Context, watcherBuffer chan<- provider.Event, e provider.Event) {
+	select {
+	case watcherBuffer <- e:
+	case <-ctx.Done():
+	}
+}
+
+func (kp *Provider) parseRoute(ingress *netv1.Ingress) []*registry.Route {
+	if ingress.Spec.IngressClassName == nil || *ingress.Spec.IngressClassName != kp.ingressClass {
+		return nil
+	}
+
+	var routes []*registry.Route
+	for _, rule := range ingress.Spec.Rules {
+		if rule.HTTP == nil {
+			continue
+		}
+		for _, path := range rule.HTTP.Paths {
+			svc := path.Backend.Service
+			if svc == nil {
+				continue
+			}
+			target := serviceURL(svc.Name, ingress.Namespace, svc.Port.Number)
+			lb := registry.NewLoadBalancer("")
+			routes = append(routes, registry.NewRoute(rule.Host, target, kp.name, lb))
+		}
+	}
+	return routes
+}
+
+func serviceURL(name, namespace string, port int32) *url.URL {
+	host := name + "." + namespace + ".svc.cluster.local"
+	return &url.URL{
+		Scheme: "http",
+		Host:   net.JoinHostPort(host, strconv.Itoa(int(port))),
+	}
 }
