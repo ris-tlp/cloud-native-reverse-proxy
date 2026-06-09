@@ -11,12 +11,9 @@ import (
 	kubernetesProvider "cloud-native-reverse-proxy/pkg/provider/kubernetes"
 
 	"github.com/moby/moby/client"
-	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
-
-const resyncPeriod = 10 * time.Minute
 
 func buildProviders(ctx context.Context, cfg config.ProvidersConfig) ([]provider.Provider, error) {
 	var providers []provider.Provider
@@ -51,13 +48,8 @@ func buildProviders(ctx context.Context, cfg config.ProvidersConfig) ([]provider
 		if err != nil {
 			return nil, fmt.Errorf("kubernetes clientset configuration failed: %w", err)
 		}
-		factory := informers.NewSharedInformerFactoryWithOptions(
-			clientset,
-			resyncPeriod,
-			informers.WithNamespace(cfg.Kubernetes.Ingress.Namespace),
-		)
-		ingresses := factory.Networking().V1().Ingresses()
-		providers = append(providers, kubernetesProvider.New("kubernetes", ingresses.Informer(), ingresses.Lister(), cfg.Kubernetes.Ingress.IngressClass))
+		ingressClient := clientset.NetworkingV1().Ingresses(cfg.Kubernetes.Ingress.Namespace)
+		providers = append(providers, kubernetesProvider.New("kubernetes", ingressClient, cfg.Kubernetes.Ingress.IngressClass))
 	}
 
 	return providers, nil
