@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 
@@ -59,13 +61,12 @@ func (kp *Provider) Watch(ctx context.Context, watcherBuffer chan<- provider.Eve
 	go kp.processEvents(watchCtx, innerBuffer, watcherBuffer, logger)
 
 	for {
-		list, err := kp.client.List(watchCtx, metav1.ListOptions{})
+		listCtx, cancel := context.WithTimeout(watchCtx, listTimeout)
+		list, err := kp.client.List(listCtx, metav1.ListOptions{})
+		cancel()
 		if err != nil {
 			return fmt.Errorf("ingress list failed: %w", err)
 		}
-
-		// Initial batch load on proxy connect
-		kp.emitBatch(watchCtx, watcherBuffer, list.Items)
 
 		w, err := kp.client.Watch(watchCtx, metav1.ListOptions{ResourceVersion: list.ResourceVersion})
 		if err != nil {
@@ -88,6 +89,9 @@ func (kp *Provider) Watch(ctx context.Context, watcherBuffer chan<- provider.Eve
 func (kp *Provider) processEvents(ctx context.Context, innerBuffer <-chan watch.Event, watcherBuffer chan<- provider.Event, logger *slog.Logger) {
 	ticker := time.NewTicker(reconcileInterval)
 	defer ticker.Stop()
+
+	// Initial batch load on proxy connect
+	kp.reconcile(ctx, watcherBuffer, logger)
 
 	for {
 		select {
@@ -155,11 +159,18 @@ func trySend(innerBuffer chan<- watch.Event, event watch.Event) bool {
 }
 
 func (kp *Provider) emitBatch(ctx context.Context, watcherBuffer chan<- provider.Event, ingresses []netv1.Ingress) {
-	var routes []*registry.Route
+	routeMap := make(map[string]*registry.Route)
 	for i := range ingresses {
-		routes = append(routes, kp.parseRoute(&ingresses[i])...)
+		routes := kp.parseRoute(&ingresses[i])
+		for _, route := range routes {
+			if existing, ok := routeMap[route.Host]; ok {
+				existing.AddBackend(route.Backends[0])
+			} else {
+				routeMap[route.Host] = route
+			}
+		}
 	}
-	emit(ctx, watcherBuffer, provider.BatchChange{Source: kp.name, Routes: routes})
+	emit(ctx, watcherBuffer, provider.BatchChange{Source: kp.name, Routes: slices.Collect(maps.Values(routeMap))})
 }
 
 func (kp *Provider) emitRegister(ctx context.Context, ingress *netv1.Ingress, watcherBuffer chan<- provider.Event) {
