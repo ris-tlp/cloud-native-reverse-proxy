@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -9,8 +8,6 @@ import (
 	"net/url"
 	"time"
 )
-
-const healthCheckTimeout = 2 * time.Second
 
 var _ Proxy = (*SimpleProxy)(nil)
 
@@ -36,18 +33,6 @@ func NewSimple(target *url.URL) *SimpleProxy {
 
 func (p *SimpleProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.rp.ServeHTTP(w, r)
-}
-
-// Check performs a TCP Dial healthcheck for registry updates
-func (p *SimpleProxy) Check(ctx context.Context) error {
-	dialCtx, cancel := context.WithTimeout(ctx, healthCheckTimeout)
-	defer cancel()
-	var d net.Dialer
-	conn, err := d.DialContext(dialCtx, "tcp", p.target.Host)
-	if err != nil {
-		return err
-	}
-	return conn.Close()
 }
 
 func defaultTransport() *http.Transport {
