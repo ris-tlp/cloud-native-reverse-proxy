@@ -1,108 +1,83 @@
-docker_host := "unix:///Users/ris-tlp/.colima/default/docker.sock"
-test_container := "test-app"
+docker_host := env_var_or_default("DOCKER_HOST", "unix:///Users/ris-tlp/.colima/default/docker.sock") # colima shenanigans
 proxy_container := "proxy"
 proxy_image := "proxy:dev"
 
-[group('k8s tests')]
-k8s-test-up:
-    kubectl apply -k manifests/dev/test-app
-
-[group('k8s tests')]
-k8s-test-down:
-    -kubectl delete -k manifests/dev/test-app
-
-[group('k8s tests')]
-k8s-test-curl:
-    curl -H "Host: test.localhost" http://localhost:8080
-
-[group('k8s proxy')]
+# build the proxy image and load it into minikube
+[private]
+[group('K8s provider :: proxy')]
 k8s-proxy-build:
-    minikube image build -t {{proxy_image}} .
+    docker build -t {{proxy_image}} .
+    minikube image load {{proxy_image}}
 
-[group('k8s proxy')]
+# deploy the proxy and wait for the rollout
+[private]
+[group('K8s provider :: proxy')]
 k8s-proxy-up:
     kubectl apply -k manifests/dev/cnrp
     kubectl rollout status deployment/cnrp-deployment --timeout=60s
 
-[group('k8s proxy')]
+# rebuild, redeploy, and restart the proxy
+[group('K8s provider :: proxy')]
 k8s-proxy-reload: k8s-proxy-build k8s-proxy-up
     kubectl rollout restart deployment/cnrp-deployment
     kubectl rollout status deployment/cnrp-deployment --timeout=60s
 
-[group('k8s proxy')]
+# delete the proxy from the cluster
+[private]
+[group('K8s provider :: proxy')]
 k8s-proxy-down:
     -kubectl delete -k manifests/dev/cnrp
 
-[group('k8s proxy')]
+# tail logs of the newest proxy pod
+[private]
+[group('K8s provider :: proxy')]
 k8s-proxy-logs:
-    kubectl logs -f deployment/cnrp-deployment
+    kubectl logs -f $(kubectl get pod -l app=cnrp --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
 
 # port-forward the proxy Service to localhost:8080
-[group('k8s proxy')]
+[group('K8s provider :: proxy')]
 k8s-proxy-forward:
     kubectl port-forward service/cnrp-svc 8080:8080
 
-[group('automated tests')]
-test:
-    go test ./...
+# full dev loop: bring up test apps, reload proxy, then tail logs
+[group('K8s provider :: proxy')]
+k8s-dev-up: k8s-test-up k8s-proxy-reload
+    just k8s-proxy-logs
 
-[group('automated tests')]
-test-integration:
-    DOCKER_HOST={{docker_host}} go test ./integration/ -tags=integration -v
+# deploy the test app 
+[group('K8s provider :: backends')]
+k8s-test-up:
+    kubectl apply -k manifests/dev/test-app
 
-[group('manual tests')]
-test-up:
-    docker run -d \
-        --name {{test_container}} \
-        --label proxy.host=test.localhost \
-        --label proxy.port=80 \
-        nginx
+# remove the test app
+[group('K8s provider :: backends')]
+k8s-test-down:
+    -kubectl delete -k manifests/dev/test-app
 
-[group('manual tests')]
-test-down:
-    -docker stop {{test_container}}
-    -docker rm {{test_container}}
-
-[group('manual tests')]
-test-restart:
-    docker restart {{test_container}}
-
-[group('manual tests')]
-test-curl:
+# curl the test app through the proxy (needs port-forward)
+[group('K8s provider :: backends')]
+k8s-test-curl:
     curl -H "Host: test.localhost" http://localhost:8080
 
-[group('manual tests')]
-test-up-multi n="3":
-    for i in $(seq 1 {{n}}); do \
-        docker run -d --name backend-$i \
-            --label proxy.host=test.localhost \
-            --label proxy.port=5678 \
-            hashicorp/http-echo -text="backend-$i"; \
-    done
-
-[group('manual tests')]
-test-down-multi n="3":
-    -for i in $(seq 1 {{n}}); do \
-        docker stop backend-$i && docker rm backend-$i; \
-    done
-
-[group('manual tests')]
-test-down-one n:
-    docker stop backend-{{n}} && docker rm backend-{{n}}
-
-[group('manual tests')]
-curl-multi:
-    for i in $(seq 1 9); do curl -s -H "Host: test.localhost" http://localhost:8080; done
-
-[group('containers')]
-run: build-image run-container
-
-[group('containers')]
-build-image:
+# build the proxy docker image
+[private]
+[group('Docker provider :: proxy')]
+docker-build-image:
     docker build -t {{proxy_image}} .
 
-[group('containers')]
-run-container: stop-container
+# full dev loop: bring up 3 test backends, then build/run the proxy and tail logs
+[group('Docker provider :: proxy')]
+docker-dev-up: docker-test-up docker-run
+
+# build the image and run the proxy container
+[private]
+[group('Docker provider :: proxy')]
+docker-run: docker-build-image docker-run-container
+
+# run the proxy container and tail its logs
+[private]
+[group('Docker provider :: proxy')]
+docker-run-container: docker-stop-container
     docker run -d \
         --name {{proxy_container}} \
         -p 8080:8080 \
@@ -111,13 +86,53 @@ run-container: stop-container
         {{proxy_image}} -config /cnrp.toml
     docker logs -f {{proxy_container}}
 
-[group('containers')]
-stop-container:
+# stop and remove the proxy container
+[private]
+[group('Docker provider :: proxy')]
+docker-stop-container:
     -docker stop {{proxy_container}}
     -docker rm {{proxy_container}}
 
-[group('containers')]
-clean n="3": test-down stop-container k8s-proxy-down k8s-test-down
-    -for i in $(seq 1 {{n}}); do \
-        docker stop backend-$i && docker rm backend-$i; \
+# run N http-echo backends on test.localhost (default 3, for load-balancing tests)
+[group('Docker provider :: backends')]
+docker-test-up n="3":
+    for i in $(seq 1 {{n}}); do \
+        docker run -d --name backend-$i \
+            --label proxy.host=test.localhost \
+            --label proxy.port=5678 \
+            hashicorp/http-echo -text="backend-$i"; \
     done
+
+# remove all backend-* containers
+[group('Docker provider :: backends')]
+docker-test-down:
+    -docker rm -f $(docker ps -aq --filter "name=^backend-")
+
+# restart a single backend by index, e.g. just docker-test-restart 2
+[group('Docker provider :: backends')]
+docker-test-restart n:
+    docker restart backend-{{n}}
+
+# remove a single backend by index, e.g. just docker-test-down-one 2
+[group('Docker provider :: backends')]
+docker-test-down-one n:
+    docker stop backend-{{n}} && docker rm backend-{{n}}
+
+# curl the proxy on test.localhost
+[group('Docker provider :: backends')]
+docker-test-curl:
+    curl -H "Host: test.localhost" http://localhost:8080
+
+# run unit tests
+[group('Tests')]
+test:
+    go test ./...
+
+# run integration tests against docker
+[group('Tests')]
+test-integration:
+    DOCKER_HOST={{docker_host}} go test ./integration/ -tags=integration -v
+
+# tear down all docker + k8s test resources
+[group('Cleanup')]
+clean: docker-test-down docker-stop-container k8s-proxy-down k8s-test-down
