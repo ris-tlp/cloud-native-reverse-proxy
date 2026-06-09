@@ -20,6 +20,9 @@ import (
 	typednetv1 "k8s.io/client-go/kubernetes/typed/networking/v1"
 )
 
+// Signals the watch stream ended and needs to be restarted
+var errWatchClosed = errors.New("watch closed")
+
 const (
 	reconcileInterval = 30 * time.Second
 	innerBufferSize   = 100
@@ -98,10 +101,9 @@ func (kp *Provider) processEvents(ctx context.Context, innerBuffer <-chan watch.
 			}
 			switch event.Type {
 			case watch.Added, watch.Modified:
-				logger.Debug("%w", ingress)
-				kp.reconcile(ctx, watcherBuffer, logger)
+				kp.emitRegister(ctx, ingress, watcherBuffer)
 			case watch.Deleted:
-				kp.reconcile(ctx, watcherBuffer, logger)
+				kp.emitDeregister(ctx, ingress, watcherBuffer)
 			}
 		case <-ticker.C:
 			kp.reconcile(ctx, watcherBuffer, logger)
@@ -121,12 +123,55 @@ func (kp *Provider) reconcile(ctx context.Context, watcherBuffer chan<- provider
 	kp.emitBatch(ctx, watcherBuffer, list.Items)
 }
 
+func (kp *Provider) drainWatch(ctx context.Context, w watch.Interface, innerBuffer chan<- watch.Event, logger *slog.Logger) error {
+	defer w.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case event, ok := <-w.ResultChan():
+			if !ok {
+				return errWatchClosed
+			}
+			if event.Type == watch.Error {
+				logger.Warn("ingress watch error event", "object", event.Object)
+				return errWatchClosed
+			}
+			if !trySend(innerBuffer, event) {
+				logger.Warn("inner buffer full, dropping event",
+					"type", event.Type, "depth", len(innerBuffer), "cap", cap(innerBuffer))
+			}
+		}
+	}
+}
+
+func trySend(innerBuffer chan<- watch.Event, event watch.Event) bool {
+	select {
+	case innerBuffer <- event:
+		return true
+	default:
+		return false
+	}
+}
+
 func (kp *Provider) emitBatch(ctx context.Context, watcherBuffer chan<- provider.Event, ingresses []netv1.Ingress) {
 	var routes []*registry.Route
 	for i := range ingresses {
 		routes = append(routes, kp.parseRoute(&ingresses[i])...)
 	}
 	emit(ctx, watcherBuffer, provider.BatchChange{Source: kp.name, Routes: routes})
+}
+
+func (kp *Provider) emitRegister(ctx context.Context, ingress *netv1.Ingress, watcherBuffer chan<- provider.Event) {
+	for _, route := range kp.parseRoute(ingress) {
+		emit(ctx, watcherBuffer, provider.Change{Op: provider.OpRegister, Host: route.Host, Route: route})
+	}
+}
+
+func (kp *Provider) emitDeregister(ctx context.Context, ingress *netv1.Ingress, watcherBuffer chan<- provider.Event) {
+	for _, route := range kp.parseRoute(ingress) {
+		emit(ctx, watcherBuffer, provider.Change{Op: provider.OpDeregister, Host: route.Host, Route: route})
+	}
 }
 
 func emit(ctx context.Context, watcherBuffer chan<- provider.Event, e provider.Event) {
