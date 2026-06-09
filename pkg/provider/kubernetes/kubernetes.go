@@ -64,9 +64,6 @@ func (kp *Provider) Watch(ctx context.Context, watcherBuffer chan<- provider.Eve
 			return fmt.Errorf("ingress list failed: %w", err)
 		}
 
-		// Initial batch load on proxy connect
-		kp.emitBatch(watchCtx, watcherBuffer, list.Items)
-
 		w, err := kp.client.Watch(watchCtx, metav1.ListOptions{ResourceVersion: list.ResourceVersion})
 		if err != nil {
 			return fmt.Errorf("ingress watch failed: %w", err)
@@ -88,6 +85,9 @@ func (kp *Provider) Watch(ctx context.Context, watcherBuffer chan<- provider.Eve
 func (kp *Provider) processEvents(ctx context.Context, innerBuffer <-chan watch.Event, watcherBuffer chan<- provider.Event, logger *slog.Logger) {
 	ticker := time.NewTicker(reconcileInterval)
 	defer ticker.Stop()
+
+	// Initial batch load on proxy connect
+	kp.reconcile(ctx, watcherBuffer, logger)
 
 	for {
 		select {
