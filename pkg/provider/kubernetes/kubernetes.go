@@ -59,7 +59,9 @@ func (kp *Provider) Watch(ctx context.Context, watcherBuffer chan<- provider.Eve
 	go kp.processEvents(watchCtx, innerBuffer, watcherBuffer, logger)
 
 	for {
-		list, err := kp.client.List(watchCtx, metav1.ListOptions{})
+		listCtx, cancel := context.WithTimeout(watchCtx, listTimeout)
+		list, err := kp.client.List(listCtx, metav1.ListOptions{})
+		cancel()
 		if err != nil {
 			return fmt.Errorf("ingress list failed: %w", err)
 		}
