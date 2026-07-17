@@ -2,8 +2,11 @@ package kubernetes
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"cloud-native-reverse-proxy/internal/testutil"
+	"cloud-native-reverse-proxy/pkg/provider"
 	"cloud-native-reverse-proxy/pkg/registry"
 
 	"github.com/stretchr/testify/assert"
@@ -171,6 +174,89 @@ func TestParseRoute(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.check(t, kp.parseRoute(tc.ingress))
+		})
+	}
+}
+
+func TestReconcile(t *testing.T) {
+	tests := []struct {
+		name     string
+		listFn   func(context.Context, metav1.ListOptions) (*netv1.IngressList, error)
+		wantSent bool
+		check    func(*testing.T, provider.BatchChange)
+	}{
+		{
+			name: "empty list emits empty batch",
+			listFn: func(_ context.Context, _ metav1.ListOptions) (*netv1.IngressList, error) {
+				return &netv1.IngressList{}, nil
+			},
+			wantSent: true,
+			check: func(t *testing.T, batch provider.BatchChange) {
+				assert.Equal(t, "kubernetes", batch.Source)
+				assert.Empty(t, batch.Routes)
+			},
+		},
+		{
+			name: "matching ingress included in batch",
+			listFn: func(_ context.Context, _ metav1.ListOptions) (*netv1.IngressList, error) {
+				return &netv1.IngressList{Items: []netv1.Ingress{
+					*ingress("cnrp", "default", rule{"app.localhost", "web", 8080}),
+				}}, nil
+			},
+			wantSent: true,
+			check: func(t *testing.T, batch provider.BatchChange) {
+				require.Len(t, batch.Routes, 1)
+				assert.Equal(t, "app.localhost", batch.Routes[0].Host)
+			},
+		},
+		{
+			name: "wrong class ingress skipped",
+			listFn: func(_ context.Context, _ metav1.ListOptions) (*netv1.IngressList, error) {
+				return &netv1.IngressList{Items: []netv1.Ingress{
+					*ingress("other", "default", rule{"app.localhost", "web", 8080}),
+				}}, nil
+			},
+			wantSent: true,
+			check: func(t *testing.T, batch provider.BatchChange) {
+				assert.Empty(t, batch.Routes)
+			},
+		},
+		{
+			name: "shared host across ingresses merges backends",
+			listFn: func(_ context.Context, _ metav1.ListOptions) (*netv1.IngressList, error) {
+				return &netv1.IngressList{Items: []netv1.Ingress{
+					*ingress("cnrp", "default", rule{"app.localhost", "web-a", 8080}),
+					*ingress("cnrp", "default", rule{"app.localhost", "web-b", 8080}),
+				}}, nil
+			},
+			wantSent: true,
+			check: func(t *testing.T, batch provider.BatchChange) {
+				require.Len(t, batch.Routes, 1)
+				assert.Len(t, batch.Routes[0].Backends, 2)
+			},
+		},
+		{
+			name: "list error sends nothing",
+			listFn: func(_ context.Context, _ metav1.ListOptions) (*netv1.IngressList, error) {
+				return nil, errors.New("apiserver unreachable")
+			},
+			wantSent: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kp := New("kubernetes", &fakeIngressClient{listFn: tc.listFn}, "cnrp")
+			ch := make(chan provider.Event, 1)
+			kp.reconcile(context.Background(), ch, testutil.DiscardLogger())
+			if !tc.wantSent {
+				assert.Empty(t, ch)
+				return
+			}
+			require.Len(t, ch, 1)
+			batch, ok := (<-ch).(provider.BatchChange)
+			require.True(t, ok)
+			tc.check(t, batch)
 		})
 	}
 }
