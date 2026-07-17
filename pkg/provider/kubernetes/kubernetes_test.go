@@ -260,3 +260,38 @@ func TestReconcile(t *testing.T) {
 		})
 	}
 }
+
+func TestTrySend(t *testing.T) {
+	t.Run("sends to non-full channel", func(t *testing.T) {
+		ch := make(chan watch.Event, 1)
+		ok := trySend(ch, watch.Event{Type: watch.Added})
+		assert.True(t, ok)
+		assert.Len(t, ch, 1)
+	})
+
+	t.Run("drops on full channel", func(t *testing.T) {
+		ch := make(chan watch.Event, 1)
+		ch <- watch.Event{}
+		ok := trySend(ch, watch.Event{Type: watch.Added})
+		assert.False(t, ok)
+		assert.Len(t, ch, 1)
+	})
+}
+
+func TestEmit(t *testing.T) {
+	t.Run("sends when context is active", func(t *testing.T) {
+		ch := make(chan provider.Event, 1)
+		ev := provider.Change{Op: provider.OpRegister, Host: "app.localhost"}
+		emit(context.Background(), ch, ev)
+		require.Len(t, ch, 1)
+		assert.Equal(t, ev, <-ch)
+	})
+
+	t.Run("does not block when context is cancelled", func(t *testing.T) {
+		ch := make(chan provider.Event)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		emit(ctx, ch, provider.Change{Op: provider.OpRegister, Host: "app.localhost"})
+		assert.Len(t, ch, 0)
+	})
+}
