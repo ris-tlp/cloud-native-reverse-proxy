@@ -14,8 +14,18 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port     int        `toml:"port"`
-	LogLevel slog.Level `toml:"logLevel"`
+	Port       int              `toml:"port"`
+	LogLevel   slog.Level       `toml:"logLevel"`
+	Middleware MiddlewareConfig `toml:"middleware"`
+}
+
+type MiddlewareConfig struct {
+	Logging LoggingConfig `toml:"logging"`
+}
+
+type LoggingConfig struct {
+	Enabled bool       `toml:"enabled"`
+	Level   slog.Level `toml:"level"`
 }
 
 type ProvidersConfig struct {
