@@ -6,6 +6,7 @@ import (
 
 	"cloud-native-reverse-proxy/internal/config"
 	"cloud-native-reverse-proxy/pkg/middleware"
+	"cloud-native-reverse-proxy/pkg/middleware/logging"
 )
 
 func buildMiddlewares(cfg config.MiddlewareConfig) ([]middleware.Middleware, error) {
@@ -19,7 +20,7 @@ func buildMiddlewares(cfg config.MiddlewareConfig) ([]middleware.Middleware, err
 			Level: &level,
 		}))
 
-		middlewares = append(middlewares, middleware.NewLoggingMiddleware(logger))
+		middlewares = append(middlewares, logging.New(logger))
 	}
 
 	return middlewares, nil
