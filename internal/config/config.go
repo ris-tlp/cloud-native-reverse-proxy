@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"log/slog"
 	"os"
 
 	"github.com/BurntSushi/toml"
@@ -13,7 +14,8 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port int `toml:"port"`
+	Port     int        `toml:"port"`
+	LogLevel slog.Level `toml:"logLevel"`
 }
 
 type ProvidersConfig struct {
@@ -38,7 +40,7 @@ type IngressConfig struct {
 
 func defaults() Config {
 	return Config{
-		Server: ServerConfig{Port: 8080},
+		Server: ServerConfig{Port: 8080, LogLevel: slog.LevelInfo},
 	}
 }
 
