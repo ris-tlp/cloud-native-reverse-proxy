@@ -5,17 +5,28 @@ import (
 	"io"
 	"net/http"
 
+	"cloud-native-reverse-proxy/pkg/middleware"
 	"cloud-native-reverse-proxy/pkg/registry"
+
+	"github.com/justinas/alice"
 )
 
 type Router struct {
 	mux *http.ServeMux
 }
 
-func New(reg *registry.Registry) *Router {
+func New(reg *registry.Registry, middlewares []middleware.Middleware) *Router {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
-	mux.Handle("/", proxyHandler(reg))
+
+	constructors := make([]alice.Constructor, len(middlewares))
+	for i, mw := range middlewares {
+		constructors[i] = alice.Constructor(mw)
+	}
+
+	middlewareChain := alice.New(constructors...).Then(proxyHandler(reg))
+
+	mux.Handle("/", middlewareChain)
 	return &Router{mux: mux}
 }
 

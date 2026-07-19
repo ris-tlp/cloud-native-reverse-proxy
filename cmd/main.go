@@ -23,8 +23,9 @@ func main() {
 	configPath := flag.String("config", "cnrp.toml", "path to config file")
 	flag.Parse()
 
+	var level slog.LevelVar
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: &level,
 	})))
 	logger := slog.Default()
 
@@ -37,6 +38,7 @@ func main() {
 		slog.Error("config file is malformed, fix or delete it to use defaults", "path", *configPath, "err", err)
 		os.Exit(1)
 	}
+	level.Set(cfg.Server.LogLevel)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -50,8 +52,16 @@ func main() {
 		slog.Warn("no providers enabled")
 	}
 
+	middlewares, err := buildMiddlewares(cfg.Server.Middleware)
+	if err != nil {
+		slog.Info("failed to build middlewares", "err", err)
+	}
+	if len(middlewares) == 0 {
+		slog.Info("no middlewares enabled")
+	}
+
 	reg := registry.NewRegistry()
-	r := router.New(reg)
+	r := router.New(reg, middlewares)
 	srv := server.New(fmt.Sprintf(":%d", cfg.Server.Port), r)
 
 	w := watcher.NewWatcher(reg, logger, providers...)

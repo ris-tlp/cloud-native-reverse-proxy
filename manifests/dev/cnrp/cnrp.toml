@@ -3,8 +3,7 @@ port = 8080
 logLevel = "info"
 
 [providers.docker]
-enabled = true
-host = "unix:///var/run/docker.sock"
+enabled = false
 
 [providers.kubernetes.ingress]
 enabled = true
