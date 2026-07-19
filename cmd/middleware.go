@@ -7,6 +7,9 @@ import (
 	"cloud-native-reverse-proxy/internal/config"
 	"cloud-native-reverse-proxy/pkg/middleware"
 	"cloud-native-reverse-proxy/pkg/middleware/logging"
+	"cloud-native-reverse-proxy/pkg/middleware/ratelimit"
+
+	"golang.org/x/time/rate"
 )
 
 func buildMiddlewares(cfg config.MiddlewareConfig) ([]middleware.Middleware, error) {
@@ -21,6 +24,11 @@ func buildMiddlewares(cfg config.MiddlewareConfig) ([]middleware.Middleware, err
 		}))
 
 		middlewares = append(middlewares, logging.New(logger))
+	}
+
+	if cfg.RateLimit.Enabled {
+		limiter := rate.NewLimiter(rate.Limit(cfg.RateLimit.RequestsPerSecond), cfg.RateLimit.Burst)
+		middlewares = append(middlewares, ratelimit.New(limiter))
 	}
 
 	return middlewares, nil
