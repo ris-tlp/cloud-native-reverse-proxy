@@ -20,12 +20,19 @@ type ServerConfig struct {
 }
 
 type MiddlewareConfig struct {
-	Logging LoggingConfig `toml:"logging"`
+	Logging   LoggingConfig   `toml:"logging"`
+	RateLimit RateLimitConfig `toml:"ratelimit"`
 }
 
 type LoggingConfig struct {
 	Enabled bool       `toml:"enabled"`
 	Level   slog.Level `toml:"level"`
+}
+
+type RateLimitConfig struct {
+	Enabled           bool    `toml:"enabled"`
+	RequestsPerSecond float64 `toml:"requestsPerSecond"`
+	Burst             int     `toml:"burst"`
 }
 
 type ProvidersConfig struct {
