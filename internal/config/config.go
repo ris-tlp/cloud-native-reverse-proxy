@@ -22,6 +22,7 @@ type ServerConfig struct {
 type MiddlewareConfig struct {
 	Logging   LoggingConfig   `toml:"logging"`
 	RateLimit RateLimitConfig `toml:"ratelimit"`
+	CORS      CORSConfig      `toml:"cors"`
 }
 
 type LoggingConfig struct {
@@ -33,6 +34,13 @@ type RateLimitConfig struct {
 	Enabled           bool    `toml:"enabled"`
 	RequestsPerSecond float64 `toml:"requestsPerSecond"`
 	Burst             int     `toml:"burst"`
+}
+
+type CORSConfig struct {
+	Enabled        bool     `toml:"enabled"`
+	AllowedOrigins []string `toml:"allowedOrigins"`
+	AllowedMethods []string `toml:"allowedMethods"`
+	AllowedHeaders []string `toml:"allowedHeaders"`
 }
 
 type ProvidersConfig struct {
@@ -57,7 +65,16 @@ type IngressConfig struct {
 
 func defaults() Config {
 	return Config{
-		Server: ServerConfig{Port: 8080, LogLevel: slog.LevelInfo},
+		Server: ServerConfig{
+			Port:     8080,
+			LogLevel: slog.LevelInfo,
+			Middleware: MiddlewareConfig{
+				CORS: CORSConfig{
+					AllowedOrigins: []string{"*"},
+					AllowedMethods: []string{"HEAD", "GET", "POST"},
+				},
+			},
+		},
 	}
 }
 

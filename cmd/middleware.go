@@ -6,6 +6,7 @@ import (
 
 	"cloud-native-reverse-proxy/internal/config"
 	"cloud-native-reverse-proxy/pkg/middleware"
+	"cloud-native-reverse-proxy/pkg/middleware/cors"
 	"cloud-native-reverse-proxy/pkg/middleware/logging"
 	"cloud-native-reverse-proxy/pkg/middleware/ratelimit"
 
@@ -29,6 +30,10 @@ func buildMiddlewares(cfg config.MiddlewareConfig) ([]middleware.Middleware, err
 	if cfg.RateLimit.Enabled {
 		limiter := rate.NewLimiter(rate.Limit(cfg.RateLimit.RequestsPerSecond), cfg.RateLimit.Burst)
 		middlewares = append(middlewares, ratelimit.New(limiter))
+	}
+
+	if cfg.CORS.Enabled {
+		middlewares = append(middlewares, cors.New(cfg.CORS.AllowedOrigins, cfg.CORS.AllowedMethods, cfg.CORS.AllowedHeaders))
 	}
 
 	return middlewares, nil
