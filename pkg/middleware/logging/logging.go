@@ -29,10 +29,12 @@ func (l *Logging) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	l.next.ServeHTTP(rec, r)
 
-	l.logger.Info("http request",
+	l.logger.Info(
+		"http request",
 		"method", r.Method,
 		"host", r.Host,
 		"path", r.URL.Path,
+		"headers", r.Header,
 		"status", rec.status,
 		"duration", time.Since(start),
 	)

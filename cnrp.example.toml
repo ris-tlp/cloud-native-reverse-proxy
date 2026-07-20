@@ -2,6 +2,21 @@
 port = 8080
 logLevel = "info"
 
+[server.middleware.logging]
+enabled = true
+level = "info"
+
+[server.middleware.ratelimit]
+enabled = true
+requestsPerSecond = 100
+burst = 20
+
+[server.middleware.cors]
+enabled = true
+allowedOrigins = ["*"]
+allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+allowedHeaders = ["Content-Type", "Authorization"]
+
 [providers.docker]
 enabled = true
 host = "unix:///var/run/docker.sock"
