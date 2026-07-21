@@ -6,6 +6,7 @@ import (
 
 	"cloud-native-reverse-proxy/internal/config"
 	"cloud-native-reverse-proxy/pkg/middleware"
+	"cloud-native-reverse-proxy/pkg/middleware/allowlist"
 	"cloud-native-reverse-proxy/pkg/middleware/cors"
 	"cloud-native-reverse-proxy/pkg/middleware/logging"
 	"cloud-native-reverse-proxy/pkg/middleware/ratelimit"
@@ -34,6 +35,10 @@ func buildMiddlewares(cfg config.MiddlewareConfig) ([]middleware.Middleware, err
 
 	if cfg.CORS.Enabled {
 		middlewares = append(middlewares, cors.New(cfg.CORS.AllowedOrigins, cfg.CORS.AllowedMethods, cfg.CORS.AllowedHeaders))
+	}
+
+	if cfg.Allowlist.Enabled {
+		middlewares = append(middlewares, allowlist.New(cfg.Allowlist.AllowedIPs))
 	}
 
 	return middlewares, nil

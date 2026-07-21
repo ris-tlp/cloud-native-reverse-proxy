@@ -17,6 +17,10 @@ allowedOrigins = ["*"]
 allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 allowedHeaders = ["Content-Type", "Authorization"]
 
+[server.middleware.allowlist]
+enabled = true
+allowedIPs = ["127.0.0.1"]
+
 [providers.docker]
 enabled = true
 host = "unix:///var/run/docker.sock"
