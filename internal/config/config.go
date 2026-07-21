@@ -23,6 +23,7 @@ type MiddlewareConfig struct {
 	Logging   LoggingConfig   `toml:"logging"`
 	RateLimit RateLimitConfig `toml:"ratelimit"`
 	CORS      CORSConfig      `toml:"cors"`
+	Allowlist AllowlistConfig `toml:"allowlist"`
 }
 
 type LoggingConfig struct {
@@ -41,6 +42,11 @@ type CORSConfig struct {
 	AllowedOrigins []string `toml:"allowedOrigins"`
 	AllowedMethods []string `toml:"allowedMethods"`
 	AllowedHeaders []string `toml:"allowedHeaders"`
+}
+
+type AllowlistConfig struct {
+	Enabled    bool     `toml:"enabled"`
+	AllowedIPs []string `toml:"allowedIPs"`
 }
 
 type ProvidersConfig struct {
